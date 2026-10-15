@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- outer ring -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFD9B45A" android:strokeWidth="2.5"
+        android:pathData="M54,30 A24,24 0 1,1 53.99,30 Z" />
+    <!-- inner ring -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFD9B45A" android:strokeWidth="1.2"
+        android:pathData="M54,36 A18,18 0 1,1 53.99,36 Z" />
+    <!-- eight-point star -->
+    <path android:fillColor="#FFD9B45A"
+        android:pathData="M54,38 L57,51 L70,54 L57,57 L54,70 L51,57 L38,54 L51,51 Z" />
+    <path android:fillColor="#FF7FA8FF"
+        android:pathData="M54,44 L56,52 L64,54 L56,56 L54,64 L52,56 L44,54 L52,52 Z" />
+</vector>
