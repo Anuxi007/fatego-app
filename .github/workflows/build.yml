@@ -28,6 +28,9 @@ jobs:
         with:
           gradle-version: '8.14.3'
 
+      - name: Bundle Spanish translation
+        run: cp data/es.json app/src/main/assets/es.json
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
 

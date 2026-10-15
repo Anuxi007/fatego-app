@@ -166,6 +166,34 @@ async function refreshListInBackground(lang) {
   } catch (e) { /* keep cached data */ }
 }
 
+// ---------- Spanish translation of game text ----------
+const TR_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/es.json";
+let TR = null;
+
+function trActive() {
+  return settings.ui === "es" && settings.data === "en" && settings.trGame !== false;
+}
+function tr(text) {
+  if (!TR || !trActive() || typeof text !== "string") return text;
+  const hit = TR[text.trim()];
+  return hit != null ? hit : text;
+}
+async function loadTranslations() {
+  if (TR || settings.ui !== "es") return;
+  const cached = store.get("tr_es", null);
+  if (cached && cached.data) TR = cached.data;
+  if (!TR) {
+    try { TR = await getJSON("es.json"); } catch (e) { /* bundled copy missing */ }
+  }
+  if (!cached || Date.now() - cached.ts > LIST_TTL) {
+    try {
+      const data = await getJSON(TR_URL + "?t=" + Math.floor(Date.now() / 3600000));
+      TR = data;
+      store.set("tr_es", { ts: Date.now(), data });
+    } catch (e) { /* keep what we have */ }
+  }
+}
+
 const INDEX_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/index.json";
 
 function applyIndex(raw) {
@@ -425,7 +453,9 @@ async function renderDetail(id) {
   renderLoading();
   window.scrollTo(0, 0);
   let svt;
-  try { svt = await loadServant(id); } catch (e) { return renderError(() => renderDetail(id)); }
+  try {
+    [svt] = await Promise.all([loadServant(id), loadTranslations()]);
+  } catch (e) { return renderError(() => renderDetail(id)); }
   const r = currentRoute();
   if (r.name !== "detail" || r.id !== String(id)) return;
   $("#title").textContent = svt.name;
@@ -690,7 +720,7 @@ function effectRows(skill, lv) {
     const first = fn.svals[0] || {};
     const last = fn.svals[fn.svals.length - 1] || {};
     const buff = fn.buffs && fn.buffs[0];
-    const label = (buff && buff.name) || fn.funcPopupText || fn.funcType;
+    const label = tr((buff && buff.name) || fn.funcPopupText || fn.funcType);
     const parts = [];
     const val = fmtValue(fn, sv);
     if (val) parts.push(`<b>${esc(val)}</b>`);
@@ -705,7 +735,7 @@ function effectRows(skill, lv) {
 
 // NA text uses placeholders like {{1:Value:m}} -> function #1, sval "Value", format m (÷10 %) / y (÷100 %)
 function fillDetail(obj, lv) {
-  const text = cleanText(obj.detail);
+  const text = cleanText(tr(obj.detail));
   const fns = obj.functions || [];
   const parts = text.split(/(\{\{[^}]*\}\})/);
   return parts.map((p) => {
@@ -899,6 +929,11 @@ function renderSettings() {
           </button>`).join("")}
       </div>
       <p class="note">${esc(t("dataNote"))}</p>
+      ${settings.ui === "es" ? `
+        <button class="opt ${settings.trGame !== false ? "active" : ""}" id="trToggle" style="margin-top:10px">
+          <span>${esc(t("trGame"))}</span><span class="check">${settings.trGame !== false ? "✓" : ""}</span>
+        </button>
+        <p class="note">${esc(t("trNote"))}</p>` : ""}
     </div>
     <div class="section" style="text-align:center">
       <button class="btn ghost" id="refreshBtn">↻ ${esc(t("refresh"))}</button>
@@ -921,12 +956,20 @@ function renderSettings() {
     saveSettings();
     renderSettings();
   });
+  const trBtn = $("#trToggle");
+  if (trBtn) trBtn.addEventListener("click", () => {
+    settings.trGame = settings.trGame === false;
+    saveSettings();
+    renderSettings();
+  });
   $("#refreshBtn").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
       state.details = {};
-      await loadList(true);
+      store.set("tr_es", null);
+      TR = null;
+      await Promise.all([loadList(true), loadTranslations()]);
       toast(t("refreshed"));
     } catch (err) {
       toast(t("loadError"));
