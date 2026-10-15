@@ -570,7 +570,7 @@ function npSection(svt) {
             <div>
               <div class="skill-name">${esc(np.name)}${np.rank ? `<span class="badge">${esc(np.rank)}</span>` : ""}${np.type ? `<span class="badge">${esc(np.type)}</span>` : ""}</div>
               ${np.ruby && np.ruby !== "-" && np.ruby !== np.name ? `<div class="d-sub">${esc(np.ruby)}</div>` : ""}
-              <div class="skill-detail">${esc(cleanText(np.detail))}</div>
+              <div class="skill-detail">${fillDetail(np, 1)}</div>
             </div>
           </div>`;
         }).join("")}
@@ -641,6 +641,29 @@ function effectRows(skill, lv) {
   return rows.join("");
 }
 
+// NA text uses placeholders like {{1:Value:m}} -> function #1, sval "Value", format m (÷10 %) / y (÷100 %)
+function fillDetail(obj, lv) {
+  const text = cleanText(obj.detail);
+  const fns = obj.functions || [];
+  const parts = text.split(/(\{\{[^}]*\}\})/);
+  return parts.map((p) => {
+    const m = /^\{\{(\d+):([A-Za-z]+)(?::([A-Za-z]*))?\}\}$/.exec(p);
+    if (!m) return esc(p);
+    const fn = fns[Number(m[1]) - 1];
+    const svals = fn && fn.svals;
+    if (!svals || !svals.length) return "?";
+    const sv = svals[Math.min(lv, svals.length) - 1] || {};
+    const raw = sv[m[2]];
+    if (raw == null) return "?";
+    let out;
+    if (m[3] === "m") out = num(raw / 10);
+    else if (m[3] === "y") out = num(raw / 100);
+    else if (m[3] === "p") out = num(raw / 10);
+    else out = num(raw);
+    return `<b class="tv">${esc(out)}</b>`;
+  }).join("");
+}
+
 function skillLevel(key, i) {
   return (state.lv[key] && state.lv[key][i]) || 10;
 }
@@ -670,7 +693,7 @@ function skillBlock(key, i, entry, mats) {
       <img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
       <div class="skill-main">
         <div class="skill-name">${esc(skill.name)}${upgrades ? `<span class="badge">▲${upgrades}</span>` : ""}<span class="badge cd ${cd ? "" : "hidden"}" data-part="cd">${cd}</span></div>
-        <div class="skill-detail">${esc(cleanText(skill.detail))}</div>
+        <div class="skill-detail" data-part="detail">${fillDetail(skill, lv)}</div>
         <div class="lv-row">
           <span class="lv-label">${esc(t("level"))} <b data-part="lv">${lv}</b></span>
           <input type="range" class="lv-slider" data-key="${key}" data-i="${i}" min="1" max="10" step="1" value="${lv}" style="--fill:${((lv - 1) / 9) * 100}%">
@@ -706,6 +729,7 @@ function bindLevelSection(key, list, mats) {
     const block = slider.closest(".skill");
     block.querySelector('[data-part="lv"]').textContent = lv;
     block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, lv);
+    block.querySelector('[data-part="detail"]').innerHTML = fillDetail(skill, lv);
     block.querySelector('[data-part="mats"]').innerHTML = levelMats(mats, lv);
     const cd = cdBadge(skill, lv);
     const cdEl = block.querySelector('[data-part="cd"]');
@@ -727,7 +751,7 @@ function passiveSection(svt) {
             <img class="skill-icon" src="${esc(s.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
             <div>
               <div class="skill-name">${esc(s.name)}</div>
-              <div class="skill-detail">${esc(cleanText(s.detail))}</div>
+              <div class="skill-detail">${fillDetail(s, 1)}</div>
             </div>
           </div>`).join("")}
       </div>
