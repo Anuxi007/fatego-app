@@ -715,6 +715,82 @@ function bindLevelSection(key, list, mats) {
   });
 }
 
+function passiveSection(svt) {
+  const list = svt.classPassive || [];
+  if (!list.length) return "";
+  return `
+    <div class="section">
+      <h2>${esc(t("passives"))}</h2>
+      <div class="card">
+        ${list.map((s) => `
+          <div class="skill">
+            <img class="skill-icon" src="${esc(s.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
+            <div>
+              <div class="skill-name">${esc(s.name)}</div>
+              <div class="skill-detail">${esc(cleanText(s.detail))}</div>
+            </div>
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function matTiles(items) {
+  return `<div class="mats">${items.map((it) => `
+    <div class="mat" title="${esc(it.item.name)}">
+      <img src="${esc(it.item.icon)}" alt="${esc(it.item.name)}" loading="lazy" onerror="imgErr(this)">
+      <span>${fmt(it.amount)}</span>
+    </div>`).join("")}</div>`;
+}
+
+function matsSection(title, mats, label) {
+  if (!mats) return "";
+  const keys = Object.keys(mats).filter((k) => mats[k] && mats[k].items && mats[k].items.length)
+    .sort((a, b) => Number(a) - Number(b));
+  if (!keys.length) return "";
+  return `
+    <div class="section">
+      <h2>${esc(title)}</h2>
+      <div class="card">
+        ${keys.map((k) => `
+          <div class="mats-stage">
+            <div class="mats-label"><span>${esc(label(k))}</span><span>QP ${fmt(mats[k].qp)}</span></div>
+            ${matTiles(mats[k].items)}
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function totalsSection(svt) {
+  const totals = new Map();
+  let qp = 0;
+  const add = (mats, mult) => {
+    if (!mats) return;
+    for (const k in mats) {
+      const m = mats[k];
+      if (!m || !m.items) continue;
+      qp += (m.qp || 0) * mult;
+      for (const it of m.items) {
+        const id = it.item.id || it.item.name;
+        const cur = totals.get(id) || { item: it.item, amount: 0 };
+        cur.amount += it.amount * mult;
+        totals.set(id, cur);
+      }
+    }
+  };
+  add(svt.ascensionMaterials, 1);
+  add(svt.skillMaterials, 3); // three active skills share the same material table
+  if (!totals.size) return "";
+  const items = [...totals.values()].sort((a, b) => (a.item.priority || 0) - (b.item.priority || 0) || (a.item.id || 0) - (b.item.id || 0));
+  return `
+    <div class="section">
+      <h2>${esc(t("totals"))}</h2>
+      <div class="card">
+        <div class="mats-label"><span>${esc(t("ascension"))} + ${esc(t("skills"))} 10/10/10</span><span>QP ${fmt(qp)}</span></div>
+        ${matTiles(items)}
+      </div>
+    </div>`;
+}
+
 // ---------- View: settings ----------
 function renderSettings() {
   setHeader(esc(t("settings")), true);
