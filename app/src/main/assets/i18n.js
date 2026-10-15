@@ -1,6 +1,11 @@
 // UI translations. Game data itself comes from Atlas Academy in English or Japanese.
 const I18N = {
   es: {
+    appendSkills: "Append skills",
+    stageShort: "Asc.",
+    perSkill: "por skill",
+    chance: "prob.",
+    maxed: "Máximo",
     langName: "Español",
     search: "Buscar servant…",
     allClasses: "Todas",
@@ -55,6 +60,11 @@ const I18N = {
     openAtlas: "Ver en Atlas Academy",
   },
   en: {
+    appendSkills: "Append skills",
+    stageShort: "Asc.",
+    perSkill: "per skill",
+    chance: "chance",
+    maxed: "Maxed",
     langName: "English",
     search: "Search servant…",
     allClasses: "All",
@@ -109,6 +119,11 @@ const I18N = {
     openAtlas: "View on Atlas Academy",
   },
   de: {
+    appendSkills: "Append-Fähigkeiten",
+    stageShort: "Stufe",
+    perSkill: "pro Fähigkeit",
+    chance: "Chance",
+    maxed: "Maximal",
     langName: "Deutsch",
     search: "Servant suchen…",
     allClasses: "Alle",
@@ -163,6 +178,11 @@ const I18N = {
     openAtlas: "Auf Atlas Academy ansehen",
   },
   ru: {
+    appendSkills: "Доп. навыки",
+    stageShort: "Возв.",
+    perSkill: "за навык",
+    chance: "шанс",
+    maxed: "Максимум",
     langName: "Русский",
     search: "Поиск слуги…",
     allClasses: "Все",
@@ -217,6 +237,11 @@ const I18N = {
     openAtlas: "Открыть на Atlas Academy",
   },
   ja: {
+    appendSkills: "アペンドスキル",
+    stageShort: "再臨",
+    perSkill: "1スキルあたり",
+    chance: "確率",
+    maxed: "最大",
     langName: "日本語",
     search: "サーヴァントを検索…",
     allClasses: "全て",

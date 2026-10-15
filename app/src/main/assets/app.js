@@ -49,6 +49,7 @@ const state = {
   sort: "no",
   details: {},          // cache: lang:id -> servant
   ascTab: {},           // selected artwork per servant
+  lv: {},               // slider level per skill section
 };
 Object.assign(state, store.get("filters", {}));
 
@@ -345,12 +346,6 @@ async function renderDetail(id) {
   const region = svt._partial || settings.data === "ja" ? "JP" : "NA";
 
   view.innerHTML = `
-    ${art.length ? `
-      <div class="hero"><img id="heroImg" class="hero-img" src="${esc(art[tab].url)}" alt="" onerror="imgErr(this)"></div>
-      ${art.length > 1 ? `<div class="tabs" id="artTabs">${art.map((a, i) =>
-        `<button class="chip ${i === tab ? "active" : ""}" data-i="${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
-    ` : ""}
-
     <div class="d-head">
       ${face ? `<img class="face" src="${esc(face)}" alt="" onerror="imgErr(this)">` : ""}
       <div>
@@ -361,15 +356,24 @@ async function renderDetail(id) {
     </div>
     ${svt._partial && t("notInNA") ? `<div class="notice">${esc(t("notInNA"))}</div>` : ""}
 
-    <div class="section card kv">
-      <div><div class="k">${esc(t("class"))}</div><div class="v"><img src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="imgErr(this)">${esc(className(svt.className))}</div></div>
-      <div><div class="k">${esc(t("attribute"))}</div><div class="v">${esc(attrName(svt.attribute))}</div></div>
-      <div><div class="k">${esc(t("gender"))}</div><div class="v">${esc((t("genders")[svt.gender]) || svt.gender || "–")}</div></div>
-      <div><div class="k">${esc(t("cost"))}</div><div class="v">${fmt(svt.cost)}</div></div>
-      <div><div class="k">${esc(t("starGen"))}</div><div class="v">${pct(svt.starGen)}</div></div>
-      <div><div class="k">${esc(t("starAbsorb"))}</div><div class="v">${fmt(svt.starAbsorb)}</div></div>
-      <div><div class="k">${esc(t("deathRate"))}</div><div class="v">${pct(svt.instantDeathChance)}</div></div>
-      <div><div class="k">${esc(t("maxLevel"))}</div><div class="v">${fmt(svt.lvMax)}</div></div>
+    <div class="d-top">
+      <div class="d-art">
+        ${art.length ? `
+          <div class="hero"><img id="heroImg" class="hero-img" src="${esc(art[tab].url)}" alt="" onerror="imgErr(this)"></div>
+          ${art.length > 1 ? `<div class="asc-grid" id="artTabs">${art.map((a, i) =>
+            `<button class="chip ${i === tab ? "active" : ""}" data-i="${i}" title="${esc(a.label)}">${esc(a.short)}</button>`).join("")}</div>` : ""}
+        ` : ""}
+      </div>
+      <div class="card kv kv-side">
+        <div><div class="k">${esc(t("class"))}</div><div class="v"><img src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="imgErr(this)">${esc(className(svt.className))}</div></div>
+        <div><div class="k">${esc(t("attribute"))}</div><div class="v">${esc(attrName(svt.attribute))}</div></div>
+        <div><div class="k">${esc(t("gender"))}</div><div class="v">${esc((t("genders")[svt.gender]) || svt.gender || "–")}</div></div>
+        <div><div class="k">${esc(t("cost"))}</div><div class="v">${fmt(svt.cost)}</div></div>
+        <div><div class="k">${esc(t("starGen"))}</div><div class="v">${pct(svt.starGen)}</div></div>
+        <div><div class="k">${esc(t("starAbsorb"))}</div><div class="v">${fmt(svt.starAbsorb)}</div></div>
+        <div><div class="k">${esc(t("deathRate"))}</div><div class="v">${pct(svt.instantDeathChance)}</div></div>
+        <div><div class="k">${esc(t("maxLevel"))}</div><div class="v">${fmt(svt.lvMax)}</div></div>
+      </div>
     </div>
 
     <div class="section">
@@ -390,15 +394,18 @@ async function renderDetail(id) {
     </div>` : ""}
 
     ${npSection(svt)}
-    ${skillSection(svt)}
+    ${levelSection("skills", t("skills"), latestPerNum(svt.skills), svt.skillMaterials)}
+    ${levelSection("append", t("appendSkills"), appendList(svt), svt.appendSkillMaterials)}
     ${passiveSection(svt)}
     ${matsSection(t("ascension"), svt.ascensionMaterials, (k) => `${t("stage")} ${Number(k) + 1}`)}
-    ${matsSection(t("skillMats"), svt.skillMaterials, (k) => `${t("level")} ${k} → ${Number(k) + 1}`)}
     ${totalsSection(svt)}
 
     <a class="link-btn" href="https://apps.atlasacademy.io/db/${region}/servant/${svt.collectionNo}">${esc(t("openAtlas"))} ↗</a>
     <p class="footer-note">${esc(t("source"))}</p>
   `;
+
+  bindLevelSection("skills", svt, latestPerNum(svt.skills), svt.skillMaterials);
+  bindLevelSection("append", svt, appendList(svt), svt.appendSkillMaterials);
 
   const tabs = $("#artTabs");
   if (tabs) tabs.addEventListener("click", (e) => {
@@ -422,7 +429,7 @@ function artworks(svt) {
   const out = [];
   const asc = g.ascension || {};
   Object.keys(asc).sort((a, b) => Number(a) - Number(b)).forEach((k) => {
-    out.push({ label: `${t("stage")} ${k}`, url: asc[k] });
+    out.push({ label: `${t("stage")} ${k}`, short: `${t("stageShort")} ${k}`, url: asc[k] });
   });
   const cos = g.costume || {};
   const costumeNames = {};
@@ -430,7 +437,8 @@ function artworks(svt) {
     for (const k in svt.profile.costume) costumeNames[k] = svt.profile.costume[k].shortName || svt.profile.costume[k].name;
   }
   Object.keys(cos).forEach((k, i) => {
-    out.push({ label: costumeNames[k] || `${t("art")} ${i + 1}`, url: cos[k] });
+    const label = costumeNames[k] || `${t("art")} ${i + 1}`;
+    out.push({ label, short: label, url: cos[k] });
   });
   return out;
 }
@@ -494,28 +502,114 @@ function latestPerNum(skills) {
   });
 }
 
-function skillSection(svt) {
-  const list = latestPerNum(svt.skills);
+// ---------- Skills with level slider ----------
+function appendList(svt) {
+  const byNum = {};
+  for (const ap of svt.appendPassive || []) {
+    if (ap && ap.skill) byNum[ap.num || 0] = ap.skill;
+  }
+  return Object.keys(byNum).sort((a, b) => a - b).map((n) => ({ skill: byNum[n], upgrades: 0 }));
+}
+
+function num(v, digits) {
+  return Number(v).toLocaleString(settings.ui === "ja" ? "ja-JP" : settings.ui, { maximumFractionDigits: digits == null ? 2 : digits });
+}
+
+function fmtValue(fn, sv) {
+  const v = sv.Value;
+  if (v == null) return "";
+  const ft = fn.funcType || "";
+  const bt = (fn.buffs && fn.buffs[0] && fn.buffs[0].type) || "";
+  if (/^(gainNp|lossNp|gainMultiplyNp|lossMultiplyNp)/.test(ft)) return num(v / 100) + "%";
+  if (/^(gainStar|lossStar|gainHp|lossHp|subState|shortenSkill|extendSkill)/.test(ft)) return num(v, 0);
+  if (/Individuality|^addIndividuality|^fieldIndividuality/.test(bt)) return "";
+  if (bt === "regainNp") return num(v / 100) + "%";
+  if (bt === "gutsRatio") return num(v / 10) + "%";
+  if (/^(regainStar|regainHp|addMaxhp|subMaxhp|guts|donotAct|upChagetd)/.test(bt)) return num(v, 0);
+  if (bt) return num(v / 10) + "%";
+  return num(v, 0);
+}
+
+function effectRows(skill, lv) {
+  const rows = [];
+  for (const fn of skill.functions || []) {
+    if (!fn || fn.funcType === "none" || !fn.svals || !fn.svals.length) continue;
+    const sv = fn.svals[Math.min(lv, fn.svals.length) - 1] || {};
+    const first = fn.svals[0] || {};
+    const last = fn.svals[fn.svals.length - 1] || {};
+    const buff = fn.buffs && fn.buffs[0];
+    const label = (buff && buff.name) || fn.funcPopupText || fn.funcType;
+    const parts = [];
+    const val = fmtValue(fn, sv);
+    if (val) parts.push(`<b>${esc(val)}</b>`);
+    if (sv.Turn > 0) parts.push(`${sv.Turn}T`);
+    if (sv.Count > 0) parts.push(`${sv.Count}×`);
+    if (sv.Rate > 0 && sv.Rate < 1000) parts.push(`${num(sv.Rate / 10)}% ${esc(t("chance"))}`);
+    const varies = first.Value !== last.Value || first.Rate !== last.Rate || first.Turn !== last.Turn || first.Count !== last.Count;
+    rows.push(`<div class="fx ${varies ? "vary" : ""}"><span class="fx-l">${esc(cleanText(label))}</span><span class="fx-v">${parts.join(" · ") || "–"}</span></div>`);
+  }
+  return rows.join("");
+}
+
+function skillsBody(list, lv) {
+  return list.map(({ skill, upgrades }) => {
+    const cd = skill.coolDown || [];
+    const cdNow = cd.length ? cd[Math.min(lv, cd.length) - 1] : null;
+    return `
+      <div class="skill">
+        <img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
+        <div class="skill-main">
+          <div class="skill-name">${esc(skill.name)}${upgrades ? `<span class="badge">▲${upgrades}</span>` : ""}${cdNow > 0 ? `<span class="badge cd">CD ${cdNow}</span>` : ""}</div>
+          <div class="skill-detail">${esc(cleanText(skill.detail))}</div>
+          <div class="fx-list">${effectRows(skill, lv)}</div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function levelMats(mats, lv) {
+  if (!mats) return "";
+  if (lv >= 10) return `<div class="mats-label"><span>${esc(t("level"))} 10</span><span>${esc(t("maxed"))}</span></div>`;
+  const m = mats[String(lv)];
+  if (!m || !m.items || !m.items.length) return "";
+  return `
+    <div class="mats-label"><span>${esc(t("level"))} ${lv} → ${lv + 1} · ${esc(t("perSkill"))}</span><span>QP ${fmt(m.qp)}</span></div>
+    ${matTiles(m.items)}`;
+}
+
+function levelSection(key, title, list, mats) {
   if (!list.length) return "";
+  const lv = state.lv[key] || 10;
   return `
     <div class="section">
-      <h2>${esc(t("skills"))}</h2>
+      <h2>${esc(title)}</h2>
       <div class="card">
-        ${list.map(({ skill, upgrades }) => {
-          const cd = skill.coolDown || [];
-          const cdTxt = cd.length ? (cd[0] === cd[cd.length - 1] ? `${cd[0]}` : `${cd[0]} → ${cd[cd.length - 1]}`) : "";
-          return `
-          <div class="skill">
-            <img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
-            <div>
-              <div class="skill-name">${esc(skill.name)}${upgrades ? `<span class="badge">▲${upgrades}</span>` : ""}</div>
-              <div class="skill-detail">${esc(cleanText(skill.detail))}</div>
-              ${cdTxt ? `<div class="d-sub">${esc(t("cooldown"))}: ${esc(cdTxt)}</div>` : ""}
-            </div>
-          </div>`;
-        }).join("")}
+        <div class="lv-row">
+          <span class="lv-label">${esc(t("level"))} <b id="lv-${key}">${lv}</b></span>
+          <input type="range" class="lv-slider" id="slider-${key}" min="1" max="10" step="1" value="${lv}">
+        </div>
+        <div id="body-${key}">${skillsBody(list, lv)}</div>
+        <div class="lv-mats" id="mats-${key}">${levelMats(mats, lv)}</div>
       </div>
     </div>`;
+}
+
+function bindLevelSection(key, svt, list, mats) {
+  const slider = $("#slider-" + key);
+  if (!slider) return;
+  const paint = () => {
+    const pctFill = ((slider.value - 1) / 9) * 100;
+    slider.style.setProperty("--fill", pctFill + "%");
+  };
+  paint();
+  slider.addEventListener("input", () => {
+    const lv = Number(slider.value);
+    state.lv[key] = lv;
+    $("#lv-" + key).textContent = lv;
+    $("#body-" + key).innerHTML = skillsBody(list, lv);
+    $("#mats-" + key).innerHTML = levelMats(mats, lv);
+    paint();
+  });
 }
 
 function passiveSection(svt) {
