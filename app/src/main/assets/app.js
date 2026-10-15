@@ -455,14 +455,14 @@ async function renderDetail(id) {
         ` : ""}
       </div>
       <div class="card kv kv-side">
-        <div><div class="k">${esc(t("class"))}</div><div class="v"><img src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="imgErr(this)">${esc(className(svt.className))}</div></div>
-        <div><div class="k">${esc(t("attribute"))}</div><div class="v">${esc(attrName(svt.attribute))}</div></div>
-        <div><div class="k">${esc(t("gender"))}</div><div class="v">${esc((t("genders")[svt.gender]) || svt.gender || "–")}</div></div>
-        <div><div class="k">${esc(t("cost"))}</div><div class="v">${fmt(svt.cost)}</div></div>
-        <div><div class="k">${esc(t("starGen"))}</div><div class="v">${pct(svt.starGen)}</div></div>
-        <div><div class="k">${esc(t("starAbsorb"))}</div><div class="v">${fmt(svt.starAbsorb)}</div></div>
-        <div><div class="k">${esc(t("deathRate"))}</div><div class="v">${pct(svt.instantDeathChance)}</div></div>
-        <div><div class="k">${esc(t("maxLevel"))}</div><div class="v">${fmt(svt.lvMax)}</div></div>
+        ${kvRow(`<img class="kv-cls" src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="this.replaceWith(document.createRange().createContextualFragment(icon('class')))">`, t("class"), esc(className(svt.className)))}
+        ${kvRow("attribute", t("attribute"), esc(attrName(svt.attribute)))}
+        ${kvRow(svt.gender === "male" ? "male" : svt.gender === "female" ? "female" : "unknown", t("gender"), esc((t("genders")[svt.gender]) || svt.gender || "–"))}
+        ${kvRow("cost", t("cost"), fmt(svt.cost))}
+        ${kvRow("star", t("starGen"), pct(svt.starGen))}
+        ${kvRow("magnet", t("starAbsorb"), fmt(svt.starAbsorb))}
+        ${kvRow("skull", t("deathRate"), pct(svt.instantDeathChance))}
+        ${kvRow("level", t("maxLevel"), fmt(svt.lvMax))}
       </div>
     </div>
 
@@ -489,6 +489,7 @@ async function renderDetail(id) {
     ${passiveSection(svt)}
     ${matsSection(t("ascension"), svt.ascensionMaterials, (k) => `${t("stage")} ${Number(k) + 1}`)}
     ${totalsSection(svt)}
+    ${traitsSection(svt)}
 
     <a class="link-btn" href="https://apps.atlasacademy.io/db/${region}/servant/${svt.collectionNo}">${esc(t("openAtlas"))} ↗</a>
     <p class="footer-note">${esc(t("source"))}</p>
@@ -507,6 +508,67 @@ async function renderDetail(id) {
     img.src = art[i].url;
     tabs.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === b));
   });
+}
+
+const ICONS = {
+  class: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/>',
+  attribute: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5S9.5 6.1 12 3.5z"/>',
+  male: '<circle cx="10" cy="14" r="5.5"/><path d="M14 10l6-6M15 4h5v5"/>',
+  female: '<circle cx="12" cy="9" r="5.5"/><path d="M12 14.5V21M9 18h6"/>',
+  unknown: '<circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/>',
+  cost: '<ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/>',
+  star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8 6.8 19.6l1-5.8-4.3-4.1 5.9-.8z"/>',
+  magnet: '<path d="M6 4v8a6 6 0 0 0 12 0V4M6 8h4M14 8h4M10 4v8a2 2 0 0 0 4 0V4"/>',
+  skull: '<path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.2 4 3 5v3h8v-3c1.8-1 3-2.6 3-5a7 7 0 0 0-7-7z"/><circle cx="9.5" cy="10.5" r="1.3"/><circle cx="14.5" cy="10.5" r="1.3"/><path d="M10.5 18v2M13.5 18v2"/>',
+  level: '<path d="M6 13l6-6 6 6M6 19l6-6 6 6"/>',
+};
+window.icon = icon;
+function icon(name) {
+  return `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+}
+function kvRow(ic, label, valueHtml) {
+  return `<div class="kv-row"><span class="kv-ic">${ic.charAt(0) === "<" ? ic : icon(ic)}</span><div class="kv-txt"><div class="k">${esc(label)}</div><div class="v">${valueHtml}</div></div></div>`;
+}
+
+// ---------- Traits ----------
+const TRAIT_HIDE = /^(unknown|canBeInBattle|hasCostume|class[A-Z].*|attribute[A-Z].*|.*StarServant|normalSvt|.*\d{3,}.*)$/;
+const TRAIT_NAMES = {
+  genderMale: "Male", genderFemale: "Female", genderUnknown: "Unknown Gender",
+  hominidaeServant: "Hominidae", knightsOfTheRound: "Knights of the Round Table",
+  fsnServant: "FSN Servant", FSNServant: "FSN Servant", saberface: "Saberface",
+  weakToEnumaElish: "Weak to Enuma Elish", genderCaenisServant: "Caenis",
+  attributeSky: "Heaven or Earth", attributeEarth: "Heaven or Earth",
+};
+function traitLabel(name) {
+  if (TRAIT_NAMES[name]) return TRAIT_NAMES[name];
+  const words = name
+    .replace(/^(alignment|gender)/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(" ");
+  return words.map((w, i) => {
+    const lw = w.toLowerCase();
+    if (i > 0 && ["to", "of", "the", "or", "and", "in", "a"].includes(lw)) return lw;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ");
+}
+function traitsSection(svt) {
+  const seen = new Set();
+  const out = [];
+  for (const tr of svt.traits || []) {
+    const n = tr && tr.name;
+    if (!n || TRAIT_HIDE.test(n)) continue;
+    const label = traitLabel(n);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  if (!out.length) return "";
+  return `
+    <div class="section">
+      <h2>${esc(t("traits"))}</h2>
+      <div class="card traits">${out.map((l) => `<span class="trait">${esc(l)}</span>`).join("")}</div>
+    </div>`;
 }
 
 function firstOf(obj) {
