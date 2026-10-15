@@ -47,6 +47,12 @@ const state = {
   cls: "all",
   rarity: "all",
   sort: "no",
+  desc: false,
+  region: "all",
+  npCard: "all",
+  npTarget: "all",
+  moreOpen: false,
+  index: null,
   details: {},          // cache: lang:id -> servant
   ascTab: {},           // selected artwork per servant
   lv: {},               // slider level per skill section
@@ -54,7 +60,10 @@ const state = {
 Object.assign(state, store.get("filters", {}));
 
 function saveFilters() {
-  store.set("filters", { cls: state.cls, rarity: state.rarity, sort: state.sort });
+  store.set("filters", {
+    cls: state.cls, rarity: state.rarity, sort: state.sort, desc: state.desc,
+    region: state.region, npCard: state.npCard, npTarget: state.npTarget,
+  });
 }
 
 // ---------- Helpers ----------
@@ -157,6 +166,24 @@ async function refreshListInBackground(lang) {
   } catch (e) { /* keep cached data */ }
 }
 
+const INDEX_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/index.json";
+
+function applyIndex(raw) {
+  state.index = { na: new Set(raw.na || []), np: raw.np || {} };
+}
+
+async function loadIndex() {
+  const cached = store.get("index", null);
+  if (cached && cached.data) applyIndex(cached.data);
+  if (cached && Date.now() - cached.ts < LIST_TTL) return;
+  try {
+    const data = await getJSON(INDEX_URL + "?t=" + Math.floor(Date.now() / 3600000));
+    store.set("index", { ts: Date.now(), data });
+    applyIndex(data);
+    if (currentRoute().name === "list") renderListResults();
+  } catch (e) { /* filters fall back to cached or disabled */ }
+}
+
 async function loadServant(id) {
   const key = settings.data + ":" + id;
   if (state.details[key]) return state.details[key];
@@ -253,11 +280,34 @@ async function renderList() {
       ${[5, 4, 3, 2, 1, 0].map((r) => `<button class="chip ${String(state.rarity) === String(r) ? "active" : ""}" data-r="${r}">${r}★</button>`).join("")}
     </div>
     <div class="row-ctrl">
+      <button class="chip ${moreActive() ? "active" : ""}" id="moreBtn">${moreLabel()}</button>
       <span class="count" id="count"></span>
-      <select id="sort" class="sort">
-        ${[["no", "sortNo"], ["rarity", "sortRarity"], ["atk", "sortAtk"], ["hp", "sortHp"], ["name", "sortName"]]
-          .map(([v, k]) => `<option value="${v}" ${state.sort === v ? "selected" : ""}>${esc(t(k))}</option>`).join("")}
-      </select>
+      <div class="sort-wrap">
+        <select id="sort" class="sort">
+          ${[["no", "sortNo"], ["rarity", "sortRarity"], ["atk", "sortAtk"], ["hp", "sortHp"], ["name", "sortName"]]
+            .map(([v, k]) => `<option value="${v}" ${state.sort === v ? "selected" : ""}>${esc(t(k))}</option>`).join("")}
+        </select>
+        <button class="sort invert ${state.desc ? "on" : ""}" id="invertBtn" title="${esc(t("invert"))}" aria-label="${esc(t("invert"))}">⇅</button>
+      </div>
+    </div>
+    <div class="more ${state.moreOpen ? "" : "hidden"}" id="morePanel">
+      <div class="more-label">${esc(t("region"))}</div>
+      <div class="chips wrap" data-f="region">
+        ${[["all", "all"], ["na", "naAvail"], ["jp", "jpOnly"]].map(([v, k]) =>
+          `<button class="chip ${state.region === v ? "active" : ""}" data-v="${v}">${esc(t(k))}</button>`).join("")}
+      </div>
+      <div class="more-label">${esc(t("npCard"))}</div>
+      <div class="chips wrap" data-f="npCard">
+        <button class="chip ${state.npCard === "all" ? "active" : ""}" data-v="all">${esc(t("all"))}</button>
+        ${["buster", "arts", "quick"].map((v) =>
+          `<button class="chip np-${v} ${state.npCard === v ? "active" : ""}" data-v="${v}">${v.charAt(0).toUpperCase() + v.slice(1)}</button>`).join("")}
+      </div>
+      <div class="more-label">${esc(t("npTarget"))}</div>
+      <div class="chips wrap" data-f="npTarget">
+        ${[["all", "all"], ["aoe", "aoe"], ["st", "st"], ["support", "support"]].map(([v, k]) =>
+          `<button class="chip ${state.npTarget === v ? "active" : ""}" data-v="${v}">${esc(t(k))}</button>`).join("")}
+      </div>
+      <p class="note ${state.index ? "hidden" : ""}" id="indexNote">${esc(t("indexError"))}</p>
     </div>
     <div class="list" id="list"></div>
   `;
@@ -276,6 +326,25 @@ async function renderList() {
     renderListResults();
   });
   $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; saveFilters(); renderListResults(); });
+  $("#invertBtn").addEventListener("click", (e) => {
+    state.desc = !state.desc; saveFilters();
+    e.currentTarget.classList.toggle("on", state.desc);
+    renderListResults();
+  });
+  $("#moreBtn").addEventListener("click", () => {
+    state.moreOpen = !state.moreOpen;
+    $("#morePanel").classList.toggle("hidden", !state.moreOpen);
+  });
+  $("#morePanel").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-v]"); if (!b) return;
+    const group = b.closest("[data-f]");
+    state[group.dataset.f] = b.dataset.v; saveFilters();
+    group.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === b));
+    const mb = $("#moreBtn");
+    mb.classList.toggle("active", moreActive());
+    mb.textContent = moreLabel();
+    renderListResults();
+  });
   $("#list").addEventListener("click", (e) => {
     const a = e.target.closest("[data-id]"); if (!a) return;
     lastListScroll = window.scrollY;
@@ -286,12 +355,30 @@ async function renderList() {
   window.scrollTo(0, lastListScroll);
 }
 
+function moreCount() {
+  return ["region", "npCard", "npTarget"].filter((k) => state[k] !== "all").length;
+}
+function moreActive() {
+  return moreCount() > 0;
+}
+function moreLabel() {
+  const n = moreCount();
+  return "☰ " + t("moreFilters") + (n ? ` (${n})` : "");
+}
+
 function filteredList() {
   const q = norm(state.query.trim());
   let arr = state.list.filter((s) => {
     if (state.cls !== "all" && classGroup(s.cls) !== state.cls) return false;
     if (state.rarity !== "all" && String(s.r) !== String(state.rarity)) return false;
     if (q && !norm(s.name).includes(q) && !norm(s.orig).includes(q) && String(s.no) !== q) return false;
+    if (state.index) {
+      if (state.region === "na" && !state.index.na.has(s.id)) return false;
+      if (state.region === "jp" && state.index.na.has(s.id)) return false;
+      const np = state.index.np[String(s.id)];
+      if (state.npCard !== "all" && (!np || np[0] !== state.npCard)) return false;
+      if (state.npTarget !== "all" && (!np || np[1] !== state.npTarget)) return false;
+    }
     return true;
   });
   const by = {
@@ -301,13 +388,16 @@ function filteredList() {
     hp: (a, b) => b.hp - a.hp,
     name: (a, b) => a.name.localeCompare(b.name, settings.data === "ja" ? "ja" : "en"),
   }[state.sort] || ((a, b) => a.no - b.no);
-  return arr.sort(by);
+  arr.sort(by);
+  return state.desc ? arr.reverse() : arr;
 }
 
 function renderListResults() {
   const listEl = $("#list"); if (!listEl) return;
   const arr = filteredList();
   $("#count").textContent = t("results", { n: arr.length });
+  const note = $("#indexNote");
+  if (note) note.classList.toggle("hidden", !!state.index);
   if (!arr.length) {
     listEl.innerHTML = `<div class="state">${esc(t("noResults"))}</div>`;
     return;
@@ -404,8 +494,8 @@ async function renderDetail(id) {
     <p class="footer-note">${esc(t("source"))}</p>
   `;
 
-  bindLevelSection("skills", svt, latestPerNum(svt.skills), svt.skillMaterials);
-  bindLevelSection("append", svt, appendList(svt), svt.appendSkillMaterials);
+  bindLevelSection("skills", latestPerNum(svt.skills), svt.skillMaterials);
+  bindLevelSection("append", appendList(svt), svt.appendSkillMaterials);
 
   const tabs = $("#artTabs");
   if (tabs) tabs.addEventListener("click", (e) => {
@@ -551,20 +641,14 @@ function effectRows(skill, lv) {
   return rows.join("");
 }
 
-function skillsBody(list, lv) {
-  return list.map(({ skill, upgrades }) => {
-    const cd = skill.coolDown || [];
-    const cdNow = cd.length ? cd[Math.min(lv, cd.length) - 1] : null;
-    return `
-      <div class="skill">
-        <img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
-        <div class="skill-main">
-          <div class="skill-name">${esc(skill.name)}${upgrades ? `<span class="badge">▲${upgrades}</span>` : ""}${cdNow > 0 ? `<span class="badge cd">CD ${cdNow}</span>` : ""}</div>
-          <div class="skill-detail">${esc(cleanText(skill.detail))}</div>
-          <div class="fx-list">${effectRows(skill, lv)}</div>
-        </div>
-      </div>`;
-  }).join("");
+function skillLevel(key, i) {
+  return (state.lv[key] && state.lv[key][i]) || 10;
+}
+
+function cdBadge(skill, lv) {
+  const cd = skill.coolDown || [];
+  const now = cd.length ? cd[Math.min(lv, cd.length) - 1] : 0;
+  return now > 0 ? `CD ${now}` : "";
 }
 
 function levelMats(mats, lv) {
@@ -573,119 +657,62 @@ function levelMats(mats, lv) {
   const m = mats[String(lv)];
   if (!m || !m.items || !m.items.length) return "";
   return `
-    <div class="mats-label"><span>${esc(t("level"))} ${lv} → ${lv + 1} · ${esc(t("perSkill"))}</span><span>QP ${fmt(m.qp)}</span></div>
+    <div class="mats-label"><span>${esc(t("level"))} ${lv} → ${lv + 1}</span><span>QP ${fmt(m.qp)}</span></div>
     ${matTiles(m.items)}`;
+}
+
+function skillBlock(key, i, entry, mats) {
+  const { skill, upgrades } = entry;
+  const lv = skillLevel(key, i);
+  const cd = cdBadge(skill, lv);
+  return `
+    <div class="skill">
+      <img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
+      <div class="skill-main">
+        <div class="skill-name">${esc(skill.name)}${upgrades ? `<span class="badge">▲${upgrades}</span>` : ""}<span class="badge cd ${cd ? "" : "hidden"}" data-part="cd">${cd}</span></div>
+        <div class="skill-detail">${esc(cleanText(skill.detail))}</div>
+        <div class="lv-row">
+          <span class="lv-label">${esc(t("level"))} <b data-part="lv">${lv}</b></span>
+          <input type="range" class="lv-slider" data-key="${key}" data-i="${i}" min="1" max="10" step="1" value="${lv}" style="--fill:${((lv - 1) / 9) * 100}%">
+        </div>
+        <div class="fx-list" data-part="fx">${effectRows(skill, lv)}</div>
+        <div class="lv-mats" data-part="mats">${levelMats(mats, lv)}</div>
+      </div>
+    </div>`;
 }
 
 function levelSection(key, title, list, mats) {
   if (!list.length) return "";
-  const lv = state.lv[key] || 10;
   return `
     <div class="section">
       <h2>${esc(title)}</h2>
-      <div class="card">
-        <div class="lv-row">
-          <span class="lv-label">${esc(t("level"))} <b id="lv-${key}">${lv}</b></span>
-          <input type="range" class="lv-slider" id="slider-${key}" min="1" max="10" step="1" value="${lv}">
-        </div>
-        <div id="body-${key}">${skillsBody(list, lv)}</div>
-        <div class="lv-mats" id="mats-${key}">${levelMats(mats, lv)}</div>
+      <div class="card" id="sec-${key}">
+        ${list.map((entry, i) => skillBlock(key, i, entry, mats)).join("")}
       </div>
     </div>`;
 }
 
-function bindLevelSection(key, svt, list, mats) {
-  const slider = $("#slider-" + key);
-  if (!slider) return;
-  const paint = () => {
-    const pctFill = ((slider.value - 1) / 9) * 100;
-    slider.style.setProperty("--fill", pctFill + "%");
-  };
-  paint();
-  slider.addEventListener("input", () => {
+function bindLevelSection(key, list, mats) {
+  const sec = $("#sec-" + key);
+  if (!sec) return;
+  sec.addEventListener("input", (e) => {
+    const slider = e.target.closest(".lv-slider");
+    if (!slider) return;
+    const i = Number(slider.dataset.i);
     const lv = Number(slider.value);
-    state.lv[key] = lv;
-    $("#lv-" + key).textContent = lv;
-    $("#body-" + key).innerHTML = skillsBody(list, lv);
-    $("#mats-" + key).innerHTML = levelMats(mats, lv);
-    paint();
+    const { skill } = list[i];
+    if (!state.lv[key]) state.lv[key] = {};
+    state.lv[key][i] = lv;
+    const block = slider.closest(".skill");
+    block.querySelector('[data-part="lv"]').textContent = lv;
+    block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, lv);
+    block.querySelector('[data-part="mats"]').innerHTML = levelMats(mats, lv);
+    const cd = cdBadge(skill, lv);
+    const cdEl = block.querySelector('[data-part="cd"]');
+    cdEl.textContent = cd;
+    cdEl.classList.toggle("hidden", !cd);
+    slider.style.setProperty("--fill", ((lv - 1) / 9) * 100 + "%");
   });
-}
-
-function passiveSection(svt) {
-  const list = svt.classPassive || [];
-  if (!list.length) return "";
-  return `
-    <div class="section">
-      <h2>${esc(t("passives"))}</h2>
-      <div class="card">
-        ${list.map((s) => `
-          <div class="skill">
-            <img class="skill-icon" src="${esc(s.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
-            <div>
-              <div class="skill-name">${esc(s.name)}</div>
-              <div class="skill-detail">${esc(cleanText(s.detail))}</div>
-            </div>
-          </div>`).join("")}
-      </div>
-    </div>`;
-}
-
-function matTiles(items) {
-  return `<div class="mats">${items.map((it) => `
-    <div class="mat" title="${esc(it.item.name)}">
-      <img src="${esc(it.item.icon)}" alt="${esc(it.item.name)}" loading="lazy" onerror="imgErr(this)">
-      <span>${fmt(it.amount)}</span>
-    </div>`).join("")}</div>`;
-}
-
-function matsSection(title, mats, label) {
-  if (!mats) return "";
-  const keys = Object.keys(mats).filter((k) => mats[k] && mats[k].items && mats[k].items.length)
-    .sort((a, b) => Number(a) - Number(b));
-  if (!keys.length) return "";
-  return `
-    <div class="section">
-      <h2>${esc(title)}</h2>
-      <div class="card">
-        ${keys.map((k) => `
-          <div class="mats-stage">
-            <div class="mats-label"><span>${esc(label(k))}</span><span>QP ${fmt(mats[k].qp)}</span></div>
-            ${matTiles(mats[k].items)}
-          </div>`).join("")}
-      </div>
-    </div>`;
-}
-
-function totalsSection(svt) {
-  const totals = new Map();
-  let qp = 0;
-  const add = (mats, mult) => {
-    if (!mats) return;
-    for (const k in mats) {
-      const m = mats[k];
-      if (!m || !m.items) continue;
-      qp += (m.qp || 0) * mult;
-      for (const it of m.items) {
-        const id = it.item.id || it.item.name;
-        const cur = totals.get(id) || { item: it.item, amount: 0 };
-        cur.amount += it.amount * mult;
-        totals.set(id, cur);
-      }
-    }
-  };
-  add(svt.ascensionMaterials, 1);
-  add(svt.skillMaterials, 3); // three active skills share the same material table
-  if (!totals.size) return "";
-  const items = [...totals.values()].sort((a, b) => (a.item.priority || 0) - (b.item.priority || 0) || (a.item.id || 0) - (b.item.id || 0));
-  return `
-    <div class="section">
-      <h2>${esc(t("totals"))}</h2>
-      <div class="card">
-        <div class="mats-label"><span>${esc(t("ascension"))} + ${esc(t("skills"))} 10/10/10</span><span>QP ${fmt(qp)}</span></div>
-        ${matTiles(items)}
-      </div>
-    </div>`;
 }
 
 // ---------- View: settings ----------
@@ -748,3 +775,4 @@ function renderSettings() {
 
 // ---------- Start ----------
 route();
+loadIndex();

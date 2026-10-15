@@ -3,6 +3,7 @@
 Runs in GitHub Actions (the full Atlas export is too large to download on a phone).
 """
 import json
+import os
 import urllib.request
 from datetime import datetime, timezone
 
@@ -47,6 +48,7 @@ def main():
         "na": na_ids,
         "np": np,
     }
+    os.makedirs("data", exist_ok=True)
     with open("data/index.json", "w", encoding="utf-8") as f:
         json.dump(out, f, separators=(",", ":"), sort_keys=True)
     print(f"servants with NP: {len(np)}, NA servants: {len(na_ids)}")
