@@ -250,3 +250,8 @@ main { padding: 12px 16px 40px; max-width: 900px; margin: 0 auto; }
 .chip.np-quick.active { border-color: var(--quick); color: #7be29b; background: rgba(63, 191, 106, 0.15); }
 .skill-detail .tv { color: var(--gold); font-weight: 600; }
 .kv-ic .kv-cls { width: 22px; height: 22px; }
+
+.ver-toggle { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.ver-toggle .chip { min-height: 28px; font-size: 12px; padding: 0 10px; }
+.unlock { color: var(--gold); font-size: 12px; margin-top: 4px; }
+.np-card { font-size: 8.5px; letter-spacing: 0; padding: 0 2px; overflow: hidden; }

@@ -56,6 +56,7 @@ const state = {
   details: {},          // cache: lang:id -> servant
   ascTab: {},           // selected artwork per servant
   lv: {},               // slider level per skill section
+  ver: {},              // selected version (normal/upgraded) per skill
 };
 Object.assign(state, store.get("filters", {}));
 
@@ -513,8 +514,8 @@ async function renderDetail(id) {
       <div class="deck">${svt.cards.map((c) => cardFace(c)).join("")}</div>
     </div>` : ""}
 
-    ${npSection(svt)}
-    ${levelSection("skills", t("skills"), latestPerNum(svt.skills), svt.skillMaterials)}
+    ${levelSection("skills", t("skills"), versionsPerNum(svt.skills), svt.skillMaterials)}
+    ${levelSection("np", t("np"), npList(svt), null)}
     ${levelSection("append", t("appendSkills"), appendList(svt), svt.appendSkillMaterials)}
     ${passiveSection(svt)}
     ${matsSection(t("ascension"), svt.ascensionMaterials, (k) => `${t("stage")} ${Number(k) + 1}`)}
@@ -525,7 +526,8 @@ async function renderDetail(id) {
     <p class="footer-note">${esc(t("source"))}</p>
   `;
 
-  bindLevelSection("skills", latestPerNum(svt.skills), svt.skillMaterials);
+  bindLevelSection("skills", versionsPerNum(svt.skills), svt.skillMaterials);
+  bindLevelSection("np", npList(svt), null);
   bindLevelSection("append", appendList(svt), svt.appendSkillMaterials);
 
   const tabs = $("#artTabs");
@@ -638,50 +640,31 @@ function cardFace(c) {
   return `<div class="cardface c-${type}">${type.toUpperCase()}</div>`;
 }
 
-function npSection(svt) {
+function npList(svt) {
   const nps = svt.noblePhantasms || [];
-  if (!nps.length) return "";
-  // keep one entry per distinct NP (name + rank + detail), latest last
+  // one entry per distinct NP (name + rank + detail); each is a "version" (base, strengthened…)
   const seen = new Set();
-  const list = [];
+  const versions = [];
   for (const np of nps) {
     const key = [np.name, np.rank, cleanText(np.detail)].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
-    list.push(np);
+    versions.push(np);
   }
-  return `
-    <div class="section">
-      <h2>${esc(t("np"))}</h2>
-      <div class="card">
-        ${list.map((np) => {
-          const type = CARD_TYPES[String(np.card)] || "buster";
-          return `
-          <div class="skill">
-            <div class="np-card c-${type}">${type.toUpperCase()}</div>
-            <div>
-              <div class="skill-name">${esc(np.name)}${np.rank ? `<span class="badge">${esc(np.rank)}</span>` : ""}${np.type ? `<span class="badge">${esc(np.type)}</span>` : ""}</div>
-              ${np.ruby && np.ruby !== "-" && np.ruby !== np.name ? `<div class="d-sub">${esc(np.ruby)}</div>` : ""}
-              <div class="skill-detail">${fillDetail(np, 1)}</div>
-            </div>
-          </div>`;
-        }).join("")}
-      </div>
-    </div>`;
+  versions.sort((x, y) => (x.priority || 0) - (y.priority || 0) || (x.id || 0) - (y.id || 0));
+  return versions.length ? [{ versions }] : [];
 }
 
-function latestPerNum(skills) {
+function versionsPerNum(skills) {
   const byNum = {};
-  for (const s of skills || []) {
-    const n = s.num || 0;
+  for (const sk of skills || []) {
+    const n = sk.num || 0;
     if (!byNum[n]) byNum[n] = [];
-    byNum[n].push(s);
+    byNum[n].push(sk);
   }
-  return Object.keys(byNum).sort((a, b) => a - b).map((n) => {
-    const arr = byNum[n];
-    const latest = arr.reduce((a, b) => ((b.priority || 0) >= (a.priority || 0) ? b : a));
-    return { skill: latest, upgrades: arr.length - 1 };
-  });
+  return Object.keys(byNum).sort((x, y) => x - y).map((n) => ({
+    versions: byNum[n].sort((x, y) => (x.priority || 0) - (y.priority || 0) || (x.id || 0) - (y.id || 0)),
+  }));
 }
 
 // ---------- Skills with level slider ----------
@@ -690,7 +673,7 @@ function appendList(svt) {
   for (const ap of svt.appendPassive || []) {
     if (ap && ap.skill) byNum[ap.num || 0] = ap.skill;
   }
-  return Object.keys(byNum).sort((a, b) => a - b).map((n) => ({ skill: byNum[n], upgrades: 0 }));
+  return Object.keys(byNum).sort((a, b) => a - b).map((n) => ({ versions: [byNum[n]] }));
 }
 
 function num(v, digits) {
@@ -702,6 +685,7 @@ function fmtValue(fn, sv) {
   if (v == null) return "";
   const ft = fn.funcType || "";
   const bt = (fn.buffs && fn.buffs[0] && fn.buffs[0].type) || "";
+  if (/^damageNp/.test(ft)) return num(v / 10) + "%";
   if (/^(gainNp|lossNp|gainMultiplyNp|lossMultiplyNp)/.test(ft)) return num(v / 100) + "%";
   if (/^(gainStar|lossStar|gainHp|lossHp|subState|shortenSkill|extendSkill)/.test(ft)) return num(v, 0);
   if (/Individuality|^addIndividuality|^fieldIndividuality/.test(bt)) return "";
@@ -720,7 +704,9 @@ function effectRows(skill, lv) {
     const first = fn.svals[0] || {};
     const last = fn.svals[fn.svals.length - 1] || {};
     const buff = fn.buffs && fn.buffs[0];
-    const label = tr((buff && buff.name) || fn.funcPopupText || fn.funcType);
+    const label = /^damageNp/.test(fn.funcType || "") && !(buff && buff.name)
+      ? t("npDamage")
+      : tr((buff && buff.name) || fn.funcPopupText || fn.funcType);
     const parts = [];
     const val = fmtValue(fn, sv);
     if (val) parts.push(`<b>${esc(val)}</b>`);
@@ -756,8 +742,19 @@ function fillDetail(obj, lv) {
   }).join("");
 }
 
+const MAX_LV = { skills: 10, append: 10, np: 5 };
+const DEFAULT_LV = { skills: 10, append: 10, np: 1 };
+
 function skillLevel(key, i) {
-  return (state.lv[key] && state.lv[key][i]) || 10;
+  return (state.lv[key] && state.lv[key][i]) || DEFAULT_LV[key] || 10;
+}
+function versionIndex(key, i, entry) {
+  const v = state.ver[key] && state.ver[key][i];
+  return v != null && v < entry.versions.length ? v : entry.versions.length - 1;
+}
+function versionLabel(idx, total) {
+  if (idx === 0) return t("normalVer");
+  return total > 2 ? `${t("upgradedVer")} ${idx}` : t("upgradedVer");
 }
 
 function cdBadge(skill, lv) {
@@ -777,18 +774,37 @@ function levelMats(mats, lv) {
 }
 
 function skillBlock(key, i, entry, mats) {
-  const { skill, upgrades } = entry;
-  const lv = skillLevel(key, i);
-  const cd = cdBadge(skill, lv);
+  const isNP = key === "np";
+  const max = MAX_LV[key] || 10;
+  const vi = versionIndex(key, i, entry);
+  const skill = entry.versions[vi];
+  const lv = Math.min(skillLevel(key, i), max);
+  const cd = isNP ? "" : cdBadge(skill, lv);
+  const type = CARD_TYPES[String(skill.card)] || "buster";
+  const icon = isNP
+    ? `<div class="np-card c-${type}">${type.toUpperCase()}</div>`
+    : `<img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">`;
+  const badges = isNP
+    ? `${skill.rank ? `<span class="badge">${esc(skill.rank)}</span>` : ""}${skill.type ? `<span class="badge">${esc(skill.type)}</span>` : ""}`
+    : `<span class="badge cd ${cd ? "" : "hidden"}" data-part="cd">${cd}</span>`;
+  const toggle = entry.versions.length > 1 ? `
+    <div class="ver-toggle">${entry.versions.map((_, k) =>
+      `<button class="chip ${k === vi ? "active" : ""}" data-ver="${k}">${esc(versionLabel(k, entry.versions.length))}</button>`).join("")}
+    </div>` : "";
+  const unlock = vi > 0 && (skill.condQuestId > 0 || isNP) ? `<div class="d-sub unlock">🔓 ${esc(t("unlockQuest"))}</div>` : "";
+  const lvLabel = isNP ? t("npLevel") : t("level");
   return `
-    <div class="skill">
-      <img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
+    <div class="skill" data-i="${i}">
+      ${icon}
       <div class="skill-main">
-        <div class="skill-name">${esc(skill.name)}${upgrades ? `<span class="badge">▲${upgrades}</span>` : ""}<span class="badge cd ${cd ? "" : "hidden"}" data-part="cd">${cd}</span></div>
+        <div class="skill-name">${esc(skill.name)}${badges}</div>
+        ${isNP && skill.ruby && skill.ruby !== "-" && skill.ruby !== skill.name ? `<div class="d-sub">${esc(skill.ruby)}</div>` : ""}
+        ${toggle}
+        ${unlock}
         <div class="skill-detail" data-part="detail">${fillDetail(skill, lv)}</div>
         <div class="lv-row">
-          <span class="lv-label">${esc(t("level"))} <b data-part="lv">${lv}</b></span>
-          <input type="range" class="lv-slider" data-key="${key}" data-i="${i}" min="1" max="10" step="1" value="${lv}" style="--fill:${((lv - 1) / 9) * 100}%">
+          <span class="lv-label">${esc(lvLabel)} <b data-part="lv">${lv}</b></span>
+          <input type="range" class="lv-slider" data-key="${key}" data-i="${i}" min="1" max="${max}" step="1" value="${lv}" style="--fill:${((lv - 1) / (max - 1)) * 100}%">
         </div>
         <div class="fx-list" data-part="fx">${effectRows(skill, lv)}</div>
         <div class="lv-mats" data-part="mats">${levelMats(mats, lv)}</div>
@@ -810,12 +826,14 @@ function levelSection(key, title, list, mats) {
 function bindLevelSection(key, list, mats) {
   const sec = $("#sec-" + key);
   if (!sec) return;
+  const max = MAX_LV[key] || 10;
   sec.addEventListener("input", (e) => {
     const slider = e.target.closest(".lv-slider");
     if (!slider) return;
     const i = Number(slider.dataset.i);
     const lv = Number(slider.value);
-    const { skill } = list[i];
+    const entry = list[i];
+    const skill = entry.versions[versionIndex(key, i, entry)];
     if (!state.lv[key]) state.lv[key] = {};
     state.lv[key][i] = lv;
     const block = slider.closest(".skill");
@@ -823,11 +841,22 @@ function bindLevelSection(key, list, mats) {
     block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, lv);
     block.querySelector('[data-part="detail"]').innerHTML = fillDetail(skill, lv);
     block.querySelector('[data-part="mats"]').innerHTML = levelMats(mats, lv);
-    const cd = cdBadge(skill, lv);
     const cdEl = block.querySelector('[data-part="cd"]');
-    cdEl.textContent = cd;
-    cdEl.classList.toggle("hidden", !cd);
-    slider.style.setProperty("--fill", ((lv - 1) / 9) * 100 + "%");
+    if (cdEl) {
+      const cd = cdBadge(skill, lv);
+      cdEl.textContent = cd;
+      cdEl.classList.toggle("hidden", !cd);
+    }
+    slider.style.setProperty("--fill", ((lv - 1) / (max - 1)) * 100 + "%");
+  });
+  sec.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ver]");
+    if (!b) return;
+    const block = b.closest(".skill");
+    const i = Number(block.dataset.i);
+    if (!state.ver[key]) state.ver[key] = {};
+    state.ver[key][i] = Number(b.dataset.ver);
+    block.outerHTML = skillBlock(key, i, list[i], mats);
   });
 }
 

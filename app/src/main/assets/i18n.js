@@ -1,6 +1,11 @@
 // UI translations. Game data itself comes from Atlas Academy in English or Japanese.
 const I18N = {
   es: {
+    normalVer: "Normal",
+    upgradedVer: "Mejorada",
+    unlockQuest: "Se desbloquea con interludio o Rank Up",
+    npLevel: "Nivel NP",
+    npDamage: "Daño del NP",
     moreFilters: "Más filtros",
     invert: "Invertir orden",
     region: "Disponibilidad",
@@ -74,6 +79,11 @@ const I18N = {
     openAtlas: "Ver en Atlas Academy",
   },
   en: {
+    normalVer: "Normal",
+    upgradedVer: "Upgraded",
+    unlockQuest: "Unlocked via Interlude or Rank Up quest",
+    npLevel: "NP Level",
+    npDamage: "NP damage",
     moreFilters: "More filters",
     invert: "Reverse order",
     region: "Availability",
@@ -145,6 +155,11 @@ const I18N = {
     openAtlas: "View on Atlas Academy",
   },
   de: {
+    normalVer: "Normal",
+    upgradedVer: "Verbessert",
+    unlockQuest: "Freigeschaltet durch Interlude oder Rank-Up-Quest",
+    npLevel: "NP-Stufe",
+    npDamage: "NP-Schaden",
     moreFilters: "Mehr Filter",
     invert: "Reihenfolge umkehren",
     region: "Verfügbarkeit",
@@ -216,6 +231,11 @@ const I18N = {
     openAtlas: "Auf Atlas Academy ansehen",
   },
   ru: {
+    normalVer: "Обычный",
+    upgradedVer: "Улучшенный",
+    unlockQuest: "Открывается интерлюдией или квестом Rank Up",
+    npLevel: "Уровень NP",
+    npDamage: "Урон NP",
     moreFilters: "Ещё фильтры",
     invert: "Обратный порядок",
     region: "Доступность",
@@ -287,6 +307,11 @@ const I18N = {
     openAtlas: "Открыть на Atlas Academy",
   },
   ja: {
+    normalVer: "通常",
+    upgradedVer: "強化後",
+    unlockQuest: "幕間の物語・強化クエストで解放",
+    npLevel: "宝具レベル",
+    npDamage: "宝具ダメージ",
     moreFilters: "詳細フィルター",
     invert: "並び順を反転",
     region: "実装状況",
