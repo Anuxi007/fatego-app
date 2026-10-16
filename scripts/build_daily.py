@@ -61,13 +61,16 @@ def main():
     items = {}
     for it in get(f"{API}/export/NA/nice_item.json"):
         items[it["id"]] = {"name": it.get("name"), "icon": it.get("icon")}
+    for it in get(f"{API}/export/JP/nice_item.json"):
+        items.setdefault(it["id"], {"name": str(it["id"]), "icon": it.get("icon")})["jname"] = it.get("name")
     svt_cache = {}
 
     def svt_info(sid):
         if sid not in svt_cache:
             try:
                 s = get(f"{API}/basic/JP/svt/{sid}?lang=en")
-                svt_cache[sid] = {"name": s.get("name"), "icon": s.get("face")}
+                j = get(f"{API}/basic/JP/svt/{sid}")
+                svt_cache[sid] = {"name": s.get("name"), "jname": j.get("name"), "icon": s.get("face")}
             except Exception:  # noqa: BLE001
                 svt_cache[sid] = {"name": str(sid), "icon": None}
         return svt_cache[sid]
@@ -88,6 +91,7 @@ def main():
             if rate is None and d.get("runs"):
                 rate = d.get("num", 1) * d.get("dropCount", 0) / d["runs"]
             drops.append({"id": d["objectId"], "type": d.get("type"), "name": info["name"],
+                          "jname": info.get("jname") or info["name"],
                           "icon": info["icon"], "num": d.get("num", 1), "rate": round(rate or 0, 4)})
         merged = {}
         for d in drops:
