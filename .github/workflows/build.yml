@@ -29,7 +29,9 @@ jobs:
           gradle-version: '8.14.3'
 
       - name: Bundle Spanish translation
-        run: cp data/es.json app/src/main/assets/es.json
+        run: |
+          cp data/es.json app/src/main/assets/es.json
+          cp data/daily.json app/src/main/assets/daily.json
 
       - name: Check signing secret
         env:

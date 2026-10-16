@@ -49,7 +49,7 @@ def main():
             if q.get("closedAt", 0) < now or q.get("openedAt", 0) > now:
                 continue
             day, kind, classes, tier = classify(name)
-            if not kind or day is None:
+            if not kind or not classes:
                 continue
             phases = q.get("phases") or [1]
             candidates.append({
@@ -91,13 +91,13 @@ def main():
                           "icon": info["icon"], "num": d.get("num", 1), "rate": round(rate or 0, 4)})
         merged = {}
         for d in drops:
-            k = (d["id"], d["type"])
+            k = (d["name"], d["type"]) if d["type"] == "servant" else (d["id"], d["type"])
             if k in merged:
                 merged[k]["rate"] = round(merged[k]["rate"] + d["rate"], 4)
             else:
                 merged[k] = d
         drops = sorted(merged.values(), key=lambda d: -d["rate"])
-        out.append({**{k: c[k] for k in ("id", "jp", "kind", "day", "classes", "tier", "ap")},
+        out.append({**{k: c[k] for k in ("id", "jp", "kind", "classes", "tier", "ap")},
                     "runs": runs, "drops": drops})
         time.sleep(0.2)
 

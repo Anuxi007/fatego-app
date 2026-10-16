@@ -29,7 +29,13 @@ const settings = Object.assign(
   store.get("settings", {})
 );
 if (!settings.data) settings.data = settings.ui === "ja" ? "ja" : "en";
-function saveSettings() { store.set("settings", settings); }
+function saveSettings() {
+  store.set("settings", settings);
+  syncNativeLang();
+}
+function syncNativeLang() {
+  try { if (window.AndroidApp && window.AndroidApp.setLanguage) window.AndroidApp.setLanguage(settings.ui); } catch (e) { /* ignore */ }
+}
 
 function t(key, vars) {
   const dict = I18N[settings.ui] || I18N.en;
@@ -57,8 +63,11 @@ const state = {
   ascTab: {},           // selected artwork per servant
   lv: {},               // slider level per skill section
   ver: {},              // selected version (normal/upgraded) per skill
+  dailyDay: 1,
+  dailyTier: {},
 };
 Object.assign(state, store.get("filters", {}));
+state.dailyDay = store.get("dailyDay", 1);
 
 function saveFilters() {
   store.set("filters", {
@@ -239,6 +248,7 @@ function currentRoute() {
   const h = location.hash.replace(/^#\/?/, "");
   if (h.startsWith("s/")) return { name: "detail", id: h.slice(2) };
   if (h === "settings") return { name: "settings" };
+  if (h === "daily") return { name: "daily" };
   return { name: "list" };
 }
 
@@ -246,6 +256,7 @@ function setHeader(title, showBack) {
   $("#title").innerHTML = title;
   $("#backBtn").classList.toggle("hidden", !showBack);
   $("#settingsBtn").classList.toggle("hidden", currentRoute().name === "settings");
+  $("#dailyBtn").classList.toggle("hidden", currentRoute().name === "daily");
 }
 
 let lastListScroll = 0;
@@ -254,6 +265,7 @@ function route() {
   document.documentElement.lang = settings.ui;
   if (r.name === "detail") renderDetail(r.id);
   else if (r.name === "settings") renderSettings();
+  else if (r.name === "daily") renderDaily();
   else renderList();
 }
 
@@ -262,6 +274,10 @@ window.addEventListener("hashchange", () => {
 });
 $("#backBtn").addEventListener("click", () => {
   if (history.length > 1) history.back(); else location.hash = "#/";
+});
+$("#dailyBtn").addEventListener("click", () => {
+  if (currentRoute().name === "list") lastListScroll = window.scrollY;
+  location.hash = "#/daily";
 });
 $("#settingsBtn").addEventListener("click", () => {
   if (currentRoute().name === "list") lastListScroll = window.scrollY;
@@ -1017,6 +1033,126 @@ window.__updateError = () => {
   if (bar) bar.classList.add("hidden");
 };
 
+
+// ---------- Daily quests (fixed weekly calendar) ----------
+const DAILY_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/daily.json";
+const ALL_CLASSES = ["saber", "archer", "lancer", "rider", "caster", "assassin", "berserker"];
+const CLASS_IDS = { saber: 1, archer: 2, lancer: 3, rider: 4, caster: 5, assassin: 6, berserker: 7 };
+// Training Grounds and Ember Gathering per weekday (1 = Monday … 7 = Sunday). Weekends: everything.
+const DAILY_SCHEDULE = {
+  tg: { 1: ["archer"], 2: ["lancer"], 3: ["berserker"], 4: ["rider"], 5: ["caster"], 6: ALL_CLASSES, 7: ALL_CLASSES },
+  ember: {
+    1: ["lancer", "assassin"], 2: ["saber", "rider"], 3: ["archer", "caster"],
+    4: ["lancer", "assassin"], 5: ["saber", "rider"], 6: ALL_CLASSES, 7: ALL_CLASSES,
+  },
+};
+let DAILY = null;
+
+async function loadDaily() {
+  if (DAILY) return DAILY;
+  const cached = store.get("daily", null);
+  if (cached && cached.data) DAILY = cached.data;
+  if (!DAILY) {
+    try { DAILY = await getJSON("daily.json"); } catch (e) { /* not bundled */ }
+  }
+  if (!cached || Date.now() - cached.ts > LIST_TTL) {
+    try {
+      const data = await getJSON(DAILY_URL + "?t=" + Math.floor(Date.now() / 3600000));
+      DAILY = data;
+      store.set("daily", { ts: Date.now(), data });
+    } catch (e) { /* keep cached/bundled */ }
+  }
+  if (!DAILY) throw new Error("no daily data");
+  return DAILY;
+}
+
+function questsFor(kind, cls) {
+  return DAILY.quests
+    .filter((q) => q.kind === kind && q.classes.includes(cls))
+    .sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0));
+}
+
+function dropRows(q) {
+  return q.drops.map((d) => {
+    const perAp = d.rate > 0 ? q.ap / d.rate : 0;
+    return `
+      <div class="drop">
+        <img src="${esc(d.icon || "")}" alt="" loading="lazy" onerror="imgErr(this)">
+        <span class="drop-name">${esc(d.name || "")}</span>
+        <span class="drop-rate"><b>×${num(d.rate, 2)}</b><small>${perAp ? `${num(perAp, 1)} AP` : ""}</small></span>
+      </div>`;
+  }).join("");
+}
+
+function dailyCard(kind, key, classes, quests) {
+  if (!quests.length) return "";
+  const sel = Math.min((state.dailyTier[key] ?? quests.length - 1), quests.length - 1);
+  const q = quests[sel];
+  const icons = classes.map((c) => `<img src="${classIcon(CLASS_IDS[c], 5)}" alt="" onerror="imgErr(this)">`).join("");
+  const title = classes.map((c) => className(c)).join(" · ");
+  return `
+    <div class="card daily-card" data-key="${esc(key)}" data-kind="${kind}">
+      <div class="daily-head"><span class="daily-icons">${icons}</span><b>${esc(title)}</b></div>
+      <div class="chips wrap tier-chips">
+        ${quests.map((x, i) => `<button class="chip ${i === sel ? "active" : ""}" data-tier="${i}">${esc(t("tiers")[x.tier] || "?")}</button>`).join("")}
+      </div>
+      <div class="daily-meta">${esc(t("apCost"))}: <b>${q.ap}</b> · ${esc(t("runs"))}: <b>${fmt(q.runs)}</b></div>
+      <div class="drops-head"><span>${esc(t("drop"))}</span><span>${esc(t("ratePerRun"))}</span></div>
+      <div class="drops">${dropRows(q)}</div>
+    </div>`;
+}
+
+function renderDailyDay() {
+  const day = state.dailyDay;
+  const body = $("#dailyBody");
+  if (!body) return;
+  const tgClasses = DAILY_SCHEDULE.tg[day];
+  const emberClasses = DAILY_SCHEDULE.ember[day];
+  const tgCards = tgClasses.map((c) => dailyCard("tg", "tg-" + c, [c], questsFor("tg", c))).join("");
+  // Ember quests cover class pairs; show each distinct quest group once
+  const seen = new Set();
+  const emberCards = [];
+  for (const c of emberClasses) {
+    const qs = questsFor("ember", c);
+    if (!qs.length) continue;
+    const group = qs[0].classes.join("+");
+    if (seen.has(group)) continue;
+    seen.add(group);
+    emberCards.push(dailyCard("ember", "em-" + group, qs[0].classes, qs));
+  }
+  body.innerHTML = `
+    ${day >= 6 ? `<div class="notice">${esc(t("weekendAll"))}</div>` : ""}
+    <div class="section"><h2>Training Grounds</h2>${tgCards || `<p class="note">${esc(t("noResults"))}</p>`}</div>
+    <div class="section"><h2>${esc(t("emberGathering"))}</h2>${emberCards.join("") || `<p class="note">${esc(t("noResults"))}</p>`}</div>
+    <p class="footer-note">${esc(t("dropsNote"))}${DAILY.updated ? ` · ${esc(DAILY.updated)}` : ""}</p>`;
+}
+
+async function renderDaily() {
+  setHeader(esc(t("daily")), true);
+  renderLoading();
+  try { await loadDaily(); } catch (e) { return renderError(renderDaily); }
+  if (currentRoute().name !== "daily") return;
+  view.innerHTML = `
+    <div class="chips day-chips" id="dayChips">
+      ${[1, 2, 3, 4, 5, 6, 7].map((d) => `<button class="chip ${d === state.dailyDay ? "active" : ""}" data-day="${d}">${esc(t("weekdays")[d - 1])}</button>`).join("")}
+    </div>
+    <div id="dailyBody"></div>`;
+  $("#dayChips").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-day]"); if (!b) return;
+    state.dailyDay = Number(b.dataset.day);
+    store.set("dailyDay", state.dailyDay);
+    document.querySelectorAll("#dayChips .chip").forEach((c) => c.classList.toggle("active", c === b));
+    renderDailyDay();
+  });
+  $("#dailyBody").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tier]"); if (!b) return;
+    const card = b.closest(".daily-card");
+    state.dailyTier[card.dataset.key] = Number(b.dataset.tier);
+    renderDailyDay();
+  });
+  renderDailyDay();
+}
+
 // ---------- View: settings ----------
 function renderSettings() {
   setHeader(esc(t("settings")), true);
@@ -1055,6 +1191,10 @@ function renderSettings() {
         <span>${esc(t("currentVersion"))}: <b>${esc(nativeApp().getVersionName())}</b></span>
         <button class="btn ghost" id="updCheckBtn">${esc(t("updCheck"))}</button>
       </div>
+      <button class="opt ${nativeApp().getNotifications() ? "active" : ""}" id="notifToggle" style="margin-top:10px">
+        <span>${esc(t("notifications"))}</span><span class="check">${nativeApp().getNotifications() ? "✓" : ""}</span>
+      </button>
+      <p class="note">${esc(t("notifNote"))}</p>
     </div>` : ""}
     <p class="footer-note">${esc(t("source"))} · api.atlasacademy.io</p>
   `;
@@ -1072,6 +1212,11 @@ function renderSettings() {
     const b = e.target.closest("[data-l]"); if (!b) return;
     settings.data = b.dataset.l;
     saveSettings();
+    renderSettings();
+  });
+  const notifBtn = $("#notifToggle");
+  if (notifBtn) notifBtn.addEventListener("click", () => {
+    nativeApp().setNotifications(!nativeApp().getNotifications());
     renderSettings();
   });
   const updBtn = $("#updCheckBtn");
@@ -1101,4 +1246,13 @@ function renderSettings() {
 // ---------- Start ----------
 route();
 loadIndex();
+syncNativeLang();
+window.__onLaunchAction = () => {
+  const app = nativeApp();
+  if (!app || !app.consumeLaunchAction) return;
+  const a = app.consumeLaunchAction();
+  if (a === "update") checkForUpdate(true);
+  else if (a.startsWith("servant:")) location.hash = "#/s/" + a.slice(8);
+};
+window.__onLaunchAction();
 setTimeout(() => checkForUpdate(false), 1500);

@@ -43,6 +43,51 @@ public class Updater {
         return BuildConfig.VERSION_NAME;
     }
 
+    private String launchAction = "";
+    private int launchServant = 0;
+
+    void setLaunch(String action, int servant) {
+        launchAction = action == null ? "" : action;
+        launchServant = servant;
+    }
+
+    /** Returns "update", "servant:<id>" or "" once, then clears it. */
+    @JavascriptInterface
+    public String consumeLaunchAction() {
+        String a = launchAction;
+        if ("servant".equals(a) && launchServant > 0) a = "servant:" + launchServant;
+        launchAction = "";
+        launchServant = 0;
+        return a;
+    }
+
+    @JavascriptInterface
+    public void setLanguage(String lang) {
+        activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE)
+                .edit().putString("lang", lang).apply();
+        CheckWorker.ensureChannel(activity, lang);
+    }
+
+    @JavascriptInterface
+    public boolean getNotifications() {
+        return activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE)
+                .getBoolean("notify", true);
+    }
+
+    @JavascriptInterface
+    public void setNotifications(boolean on) {
+        activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("notify", on).apply();
+        if (on) activity.runOnUiThread(this::requestNotificationPermission);
+    }
+
+    void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(
+                android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            activity.requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 42);
+        }
+    }
+
     @JavascriptInterface
     public void downloadAndInstall(final String url) {
         if (busy || url == null || !url.startsWith("https://")) return;

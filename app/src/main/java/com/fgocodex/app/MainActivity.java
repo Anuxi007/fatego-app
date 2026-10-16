@@ -41,6 +41,11 @@ public class MainActivity extends Activity {
 
         updater = new Updater(this, webView);
         webView.addJavascriptInterface(updater, "AndroidApp");
+        readLaunch(getIntent());
+        CheckWorker.schedule(this);
+        if (getSharedPreferences(CheckWorker.PREFS, MODE_PRIVATE).getBoolean("notify", true)) {
+            updater.requestNotificationPermission();
+        }
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -67,6 +72,22 @@ public class MainActivity extends Activity {
             webView.restoreState(savedInstanceState);
         } else {
             webView.loadUrl("https://" + APP_HOST + "/assets/index.html");
+        }
+    }
+
+    private void readLaunch(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getStringExtra("action");
+        if (action != null) updater.setLaunch(action, intent.getIntExtra("servant", 0));
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        readLaunch(intent);
+        if (webView != null) {
+            webView.evaluateJavascript("window.__onLaunchAction && window.__onLaunchAction()", null);
         }
     }
 
