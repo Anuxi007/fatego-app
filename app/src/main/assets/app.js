@@ -2,7 +2,7 @@
 
 const API = "https://api.atlasacademy.io";
 const LIST_TTL = 24 * 60 * 60 * 1000; // refresh the servant list once a day
-const UI_LANGS = ["es", "en", "de", "ru", "ja"];
+const UI_LANGS = ["es", "en", "ja"];
 const CARD_TYPES = { "1": "arts", "2": "buster", "3": "quick", arts: "arts", buster: "buster", quick: "quick" };
 const CLASS_ORDER = [
   "saber", "archer", "lancer", "rider", "caster", "assassin", "berserker",
@@ -28,6 +28,7 @@ const settings = Object.assign(
   { ui: detectLang(), data: null },
   store.get("settings", {})
 );
+if (!UI_LANGS.includes(settings.ui)) settings.ui = "en"; // German/Russian were removed
 if (!settings.data) settings.data = settings.ui === "ja" ? "ja" : "en";
 function saveSettings() {
   store.set("settings", settings);
@@ -304,6 +305,63 @@ $("#menuBtn").addEventListener("click", () => {
   openDrawer();
 });
 $("#drawerShade").addEventListener("click", closeDrawer);
+
+// Swipe from the left edge to open the menu (and swipe left to close it); the drawer follows the finger.
+(function drawerSwipe() {
+  const drawer = $("#drawer");
+  const shade = $("#drawerShade");
+  const EDGE = 28;
+  let g = null;
+  const width = () => drawer.getBoundingClientRect().width || 280;
+  function setPos(px) {
+    const w = width();
+    const p = Math.max(0, Math.min(1, px / w));
+    drawer.style.transition = "none";
+    shade.style.transition = "none";
+    drawer.style.transform = `translateX(${(p - 1) * 100}%)`;
+    shade.style.opacity = String(p);
+  }
+  function reset() {
+    drawer.style.transition = drawer.style.transform = "";
+    shade.style.transition = shade.style.opacity = "";
+  }
+  document.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    const tch = e.touches[0];
+    const open = document.body.classList.contains("drawer-open");
+    if (!$("#sheet").classList.contains("hidden")) return;
+    if (!open && (tch.clientX > EDGE || e.target.closest("input[type=range]"))) return;
+    g = { x0: tch.clientX, y0: tch.clientY, open, active: false, last: tch.clientX, t: Date.now(), v: 0 };
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!g) return;
+    const tch = e.touches[0];
+    const dx = tch.clientX - g.x0, dy = tch.clientY - g.y0;
+    if (!g.active) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { g = null; return; }
+      if (Math.abs(dx) < 10) return;
+      if (g.open ? dx > 0 : dx < 0) { g = null; return; }
+      g.active = true;
+      if (!g.open) openDrawer();
+    }
+    const now = Date.now();
+    g.v = (tch.clientX - g.last) / Math.max(1, now - g.t);
+    g.last = tch.clientX; g.t = now;
+    setPos(g.open ? width() + dx : dx);
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  function end() {
+    if (!g) return;
+    const was = g; g = null;
+    if (!was.active) return;
+    const shown = (was.open ? width() + (was.last - was.x0) : was.last - was.x0) / width();
+    const keepOpen = was.v > 0.35 ? true : was.v < -0.35 ? false : shown > 0.5;
+    reset();
+    if (keepOpen) document.body.classList.add("drawer-open"); else closeDrawer();
+  }
+  document.addEventListener("touchend", end);
+  document.addEventListener("touchcancel", end);
+})();
 $("#drawerItems").addEventListener("click", (e) => {
   if (e.target.closest("a")) closeDrawer();
 });
@@ -759,9 +817,46 @@ function effectRows(skill, lv) {
   return rows.join("");
 }
 
+// Split a skill/NP description into one effect per line ("A & B + C" -> "A.\nB.\nC.").
+// Only top-level separators count: nothing inside quotes, brackets or {{placeholders}}.
+const ES_CLAUSE = /^(aumenta|aumentas|reduce|reduces|elimina|eliminas|aplica|aplicas|restaura|restauras|recupera|recuperas|obtiene|obtienes|otorga|otorgas|inflige|infliges|te|le|les|se|absorbe|absorbes|convierte|cambia|carga|cargas|gana|ganas|quita|disminuye|cura|alta|baja|gran|probabilidad|consume|consumes|sacrifica|retrocede|retira|añade|anula|invoca|concede|activa|garantiza)\b/i;
+const OPEN = "(<[{\"「（【〔『";
+const CLOSE = ")>]}\"」）】〕』";
+function splitEffects(text) {
+  const lang = settings.data === "ja" ? "ja" : trActive() ? "es" : "en";
+  const src = lang === "ja" ? text.replace(/\s*\n\s*/g, "") : text.replace(/\s*\n\s*/g, " ");
+  const parts = [];
+  let depth = 0, quote = false, start = 0;
+  const cut = (at, skip) => { parts.push(src.slice(start, at)); start = at + skip; };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"') { quote = !quote; continue; }
+    if (quote) continue;
+    if (OPEN.includes(ch)) { depth++; continue; }
+    if (CLOSE.includes(ch)) { depth = Math.max(0, depth - 1); continue; }
+    if (depth) continue;
+    if (lang === "ja") {
+      if (ch === "＆" || ch === "＋") cut(i, 1);
+      continue;
+    }
+    const rest = src.slice(i);
+    if (rest.startsWith(" & ") || rest.startsWith(" + ")) { cut(i, 3); i += 2; continue; }
+    if (lang === "es") {
+      const m = /^(, y |, | y )/.exec(rest);
+      if (m && ES_CLAUSE.test(rest.slice(m[1].length))) { cut(i, m[1].length); i += m[1].length - 1; }
+    }
+  }
+  parts.push(src.slice(start));
+  return parts.map((p) => p.trim()).filter(Boolean).map((p) => {
+    if (lang === "ja") return /[。！？]$/.test(p) ? p : p + "。";
+    p = p.replace(/^([<\[(][^>\])]*[>\])]\s*)?(\p{Ll})/u, (m0, pre, c) => (pre || "") + c.toUpperCase());
+    return /[.!?。]$/.test(p) ? p : p + ".";
+  }).join("\n");
+}
+
 // NA text uses placeholders like {{1:Value:m}} -> function #1, sval "Value", format m (÷10 %) / y (÷100 %)
 function fillDetail(obj, lv) {
-  const text = cleanText(tr(obj.detail));
+  const text = splitEffects(cleanText(tr(obj.detail)));
   const fns = obj.functions || [];
   const parts = text.split(/(\{\{[^}]*\}\})/);
   return parts.map((p) => {
@@ -1101,14 +1196,18 @@ function questsFor(kind, cls) {
   return [...byTier.values()].sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0));
 }
 
+function dropName(d) {
+  return (settings.data === "ja" && d.jname) || d.name || "";
+}
+
 function dropRows(q) {
   return q.drops.map((d) => {
     const perAp = d.rate > 0 ? q.ap / d.rate : 0;
     return `
-      <div class="drop" ${d.type === "item" ? `data-item="${d.id}" data-iname="${esc(d.name || "")}" data-icon="${esc(d.icon || "")}"` : ""}>
+      <div class="drop" ${d.type === "item" ? `data-item="${d.id}" data-iname="${esc(dropName(d))}" data-icon="${esc(d.icon || "")}"` : ""}>
         <img src="${esc(d.icon || "")}" alt="" loading="lazy" onerror="imgErr(this)">
-        <span class="drop-name">${esc(d.name || "")}</span>
-        <span class="drop-rate"><b>${num(d.rate * 100, 1)}%</b><small>${perAp ? `${num(perAp, 1)} AP/drop` : ""}</small></span>
+        <span class="drop-name">${esc(dropName(d))}</span>
+        <span class="drop-rate"><b>${num(d.rate * 100, 1)}%</b><small>${perAp ? `${num(perAp, 1)} ${esc(t("apPerDrop"))}` : ""}</small></span>
       </div>`;
   }).join("");
 }
@@ -1151,7 +1250,7 @@ function renderDailyDay() {
   }
   body.innerHTML = `
     ${day >= 6 ? `<div class="notice">${esc(t("weekendAll"))}</div>` : ""}
-    <div class="section"><h2>Training Grounds</h2>${tgCards || `<p class="note">${esc(t("noResults"))}</p>`}</div>
+    <div class="section"><h2>${esc(t("trainingGrounds"))}</h2>${tgCards || `<p class="note">${esc(t("noResults"))}</p>`}</div>
     <div class="section"><h2>${esc(t("emberGathering"))}</h2>${emberCards.join("") || `<p class="note">${esc(t("noResults"))}</p>`}</div>
     <p class="footer-note">${esc(t("dropsNote"))}${DAILY.updated ? ` · ${esc(DAILY.updated)}` : ""}</p>`;
 }
@@ -1615,7 +1714,7 @@ async function openItemSheet(id, name, icon) {
       const d = q.drops.find((x) => x.type === "item" && String(x.id) === String(id));
       if (!d || !d.rate) continue;
       rows.push({
-        title: `${q.kind === "tg" ? "Training Grounds" : t("emberGathering")} · ${q.classes.map(className).join("/")} (${t("tiers")[q.tier] || "?"})`,
+        title: `${q.kind === "tg" ? t("trainingGrounds") : t("emberGathering")} · ${q.classes.map(className).join("/")} (${t("tiers")[q.tier] || "?"})`,
         sub: `${t("daily")}: ${dailyDaysFor(q.kind, q.classes)}`,
         ap: q.ap, runs: q.runs, rate: d.rate,
       });
@@ -1624,7 +1723,15 @@ async function openItemSheet(id, name, icon) {
   if (DROPS && DROPS.items[String(id)]) {
     for (const [qi, rate] of DROPS.items[String(id)]) {
       const q = DROPS.quests[qi];
-      rows.push({ title: q.spot || q.name, sub: q.war, ap: q.ap, runs: q.runs, rate });
+      const ja = settings.data === "ja";
+      const spot = (ja && q.jspot) || q.spot || "";
+      const quest = (ja && q.jname) || q.name || "";
+      const war = (ja && q.jwar) || q.war || "";
+      rows.push({
+        title: spot || quest,
+        sub: [quest !== spot ? quest : "", war].filter((x) => x && x !== "-").join(" · "),
+        ap: q.ap, runs: q.runs, rate,
+      });
     }
   }
   rows.sort((a, b) => a.ap / a.rate - b.ap / b.rate);
@@ -1639,8 +1746,8 @@ async function openItemSheet(id, name, icon) {
       <div class="drops-head"><span>${esc(t("location"))}</span><span>${esc(t("ratePerRun"))}</span></div>
       <div class="item-rows">${top.map((r) => `
         <div class="drop">
-          <span class="drop-name"><b>${esc(r.title)}</b><small>${esc(r.sub)} · ${r.ap} AP · ${fmt(r.runs)} ${esc(t("runsShort"))}</small></span>
-          <span class="drop-rate"><b>${num(r.rate * 100, 1)}%</b><small>${num(r.ap / r.rate, 1)} AP/drop</small></span>
+          <span class="drop-name"><b>${esc(r.title)}</b><small>${r.sub ? esc(r.sub) + "<br>" : ""}${r.ap} AP · ${fmt(r.runs)} ${esc(t("runsShort"))}</small></span>
+          <span class="drop-rate"><b>${num(r.rate * 100, 1)}%</b><small>${num(r.ap / r.rate, 1)} ${esc(t("apPerDrop"))}</small></span>
         </div>`).join("")}</div>
       <p class="footer-note" style="margin-top:12px">${esc(t("dropsNote"))}</p>`
     : `<div class="state">${esc(t("noDrops"))}</div>`}`);

@@ -172,24 +172,6 @@ public class CheckWorker extends Worker {
                         case "channel": return "Actualizaciones y servants nuevos";
                     }
                     break;
-                case "de":
-                    switch (key) {
-                        case "updTitle": return "Neue Version von FGO Codex";
-                        case "updText": return "Tippen zum Aktualisieren";
-                        case "newJP": return "Neuer Servant in JP";
-                        case "newNA": return "Neuer Servant in NA";
-                        case "channel": return "Updates und neue Servants";
-                    }
-                    break;
-                case "ru":
-                    switch (key) {
-                        case "updTitle": return "Новая версия FGO Codex";
-                        case "updText": return "Нажмите, чтобы обновить";
-                        case "newJP": return "Новый слуга в JP";
-                        case "newNA": return "Новый слуга в NA";
-                        case "channel": return "Обновления и новые слуги";
-                    }
-                    break;
                 case "ja":
                     switch (key) {
                         case "updTitle": return "FGO Codexの新しいバージョン";
