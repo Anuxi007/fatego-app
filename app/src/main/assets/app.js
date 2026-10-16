@@ -29,6 +29,7 @@ const settings = Object.assign(
   store.get("settings", {})
 );
 if (!UI_LANGS.includes(settings.ui)) settings.ui = "en"; // German/Russian were removed
+try { localStorage.removeItem("drops"); localStorage.removeItem("daily"); } catch (e) { /* old caches without translated names */ }
 if (!settings.data) settings.data = settings.ui === "ja" ? "ja" : "en";
 function saveSettings() {
   store.set("settings", settings);
@@ -1169,7 +1170,7 @@ let DAILY = null;
 
 async function loadDaily() {
   if (DAILY) return DAILY;
-  const cached = store.get("daily", null);
+  const cached = store.get("daily_v2", null);
   if (cached && cached.data) DAILY = cached.data;
   if (!DAILY) {
     try { DAILY = await getJSON("daily.json"); } catch (e) { /* not bundled */ }
@@ -1178,7 +1179,7 @@ async function loadDaily() {
     try {
       const data = await getJSON(DAILY_URL + "?t=" + Math.floor(Date.now() / 3600000));
       DAILY = data;
-      store.set("daily", { ts: Date.now(), data });
+      store.set("daily_v2", { ts: Date.now(), data });
     } catch (e) { /* keep cached/bundled */ }
   }
   if (!DAILY) throw new Error("no daily data");
@@ -1680,7 +1681,7 @@ const DROPS_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/da
 let DROPS = null;
 async function loadDrops() {
   if (DROPS) return DROPS;
-  const cached = store.get("drops", null);
+  const cached = store.get("drops_v2", null);
   if (cached && cached.data) DROPS = cached.data;
   if (!DROPS) {
     try { DROPS = await getJSON("drops.json"); } catch (e) { /* not bundled */ }
@@ -1689,7 +1690,7 @@ async function loadDrops() {
     try {
       const data = await getJSON(DROPS_URL + "?t=" + Math.floor(Date.now() / 3600000));
       DROPS = data;
-      store.set("drops", { ts: Date.now(), data });
+      store.set("drops_v2", { ts: Date.now(), data });
     } catch (e) { /* keep */ }
   }
   return DROPS;
