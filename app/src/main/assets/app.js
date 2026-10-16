@@ -936,6 +936,87 @@ function totalsSection(svt) {
     </div>`;
 }
 
+
+// ---------- In-app updates (GitHub Releases) ----------
+const RELEASES_API = "https://api.github.com/repos/Anuxi007/fatego-app/releases/latest";
+const UPDATE_EVERY = 12 * 60 * 60 * 1000;
+
+function nativeApp() {
+  return typeof window.AndroidApp !== "undefined" ? window.AndroidApp : null;
+}
+
+async function checkForUpdate(manual) {
+  const app = nativeApp();
+  if (!app) return;
+  if (!manual) {
+    const last = store.get("updCheck", 0);
+    if (Date.now() - last < UPDATE_EVERY) return;
+  }
+  store.set("updCheck", Date.now());
+  try {
+    const rel = await getJSON(RELEASES_API);
+    const m = /(\d+)/.exec(rel.tag_name || "");
+    const latest = m ? Number(m[1]) : 0;
+    const asset = (rel.assets || []).find((a) => /\.apk$/i.test(a.name));
+    if (asset && latest > app.getVersionCode()) {
+      showUpdateBanner(latest, asset.browser_download_url);
+    } else if (manual) {
+      toast(t("updLatest"));
+    }
+  } catch (e) {
+    if (manual) toast(t("updError"));
+  }
+}
+
+function showUpdateBanner(build, url) {
+  let el = $("#updBanner");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "updBanner";
+    el.className = "upd-banner";
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `
+    <div class="upd-title">⬆ ${esc(t("updAvailable"))} <span class="upd-build">build ${build}</span></div>
+    <div class="upd-msg" id="updMsg"></div>
+    <div class="upd-bar hidden" id="updBar"><span id="updFill"></span></div>
+    <div class="upd-actions" id="updActions">
+      <button class="btn ghost" id="updLater">${esc(t("updLater"))}</button>
+      <button class="btn" id="updNow">${esc(t("updNow"))}</button>
+    </div>`;
+  $("#updLater").addEventListener("click", () => el.remove());
+  $("#updNow").addEventListener("click", () => {
+    $("#updActions").classList.add("hidden");
+    $("#updBar").classList.remove("hidden");
+    $("#updMsg").textContent = t("updDownloading");
+    nativeApp().downloadAndInstall(url);
+  });
+}
+
+window.__updateProgress = (p) => {
+  const fill = $("#updFill");
+  if (fill) fill.style.width = p + "%";
+  const msg = $("#updMsg");
+  if (msg) msg.textContent = `${t("updDownloading")} ${p}%`;
+};
+window.__updateNeedsPermission = () => {
+  const msg = $("#updMsg");
+  if (msg) msg.textContent = t("updPermission");
+};
+window.__updateInstalling = () => {
+  const msg = $("#updMsg");
+  if (msg) msg.textContent = t("updInstalling");
+  setTimeout(() => { const el = $("#updBanner"); if (el) el.remove(); }, 4000);
+};
+window.__updateError = () => {
+  const msg = $("#updMsg");
+  if (msg) msg.textContent = t("updError");
+  const actions = $("#updActions");
+  if (actions) actions.classList.remove("hidden");
+  const bar = $("#updBar");
+  if (bar) bar.classList.add("hidden");
+};
+
 // ---------- View: settings ----------
 function renderSettings() {
   setHeader(esc(t("settings")), true);
@@ -967,6 +1048,14 @@ function renderSettings() {
     <div class="section" style="text-align:center">
       <button class="btn ghost" id="refreshBtn">↻ ${esc(t("refresh"))}</button>
     </div>
+    ${nativeApp() ? `
+    <div class="section">
+      <h2>${esc(t("updSection"))}</h2>
+      <div class="card upd-card">
+        <span>${esc(t("currentVersion"))}: <b>${esc(nativeApp().getVersionName())}</b></span>
+        <button class="btn ghost" id="updCheckBtn">${esc(t("updCheck"))}</button>
+      </div>
+    </div>` : ""}
     <p class="footer-note">${esc(t("source"))} · api.atlasacademy.io</p>
   `;
   $("#uiOpts").addEventListener("click", (e) => {
@@ -985,6 +1074,8 @@ function renderSettings() {
     saveSettings();
     renderSettings();
   });
+  const updBtn = $("#updCheckBtn");
+  if (updBtn) updBtn.addEventListener("click", () => checkForUpdate(true));
   const trBtn = $("#trToggle");
   if (trBtn) trBtn.addEventListener("click", () => {
     settings.trGame = settings.trGame === false;
@@ -1010,3 +1101,4 @@ function renderSettings() {
 // ---------- Start ----------
 route();
 loadIndex();
+setTimeout(() => checkForUpdate(false), 1500);

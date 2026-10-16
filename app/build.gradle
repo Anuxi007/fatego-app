@@ -2,6 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
+// Every GitHub Actions build gets a higher versionCode, so the in-app updater can compare versions.
+def runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
+
 android {
     namespace 'com.fgocodex.app'
     compileSdk 35
@@ -10,14 +13,30 @@ android {
         applicationId 'com.fgocodex.app'
         minSdk 26
         targetSdk 34
-        versionCode 7
-        versionName '1.6'
+        versionCode runNumber
+        versionName "2.0.${runNumber}"
+    }
+
+    signingConfigs {
+        release {
+            // The keystore is password-protected; the password lives only in the
+            // KEYSTORE_PASSWORD repository secret.
+            storeFile file('release.jks')
+            storePassword System.getenv("KEYSTORE_PASSWORD")
+            keyAlias 'fgocodex'
+            keyPassword System.getenv("KEYSTORE_PASSWORD")
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
+            signingConfig signingConfigs.release
         }
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     compileOptions {
@@ -28,4 +47,5 @@ android {
 
 dependencies {
     implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'androidx.core:core:1.13.1'
 }

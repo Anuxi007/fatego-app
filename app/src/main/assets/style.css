@@ -255,3 +255,17 @@ main { padding: 12px 16px 40px; max-width: 900px; margin: 0 auto; }
 .ver-toggle .chip { min-height: 28px; font-size: 12px; padding: 0 10px; }
 .unlock { color: var(--gold); font-size: 12px; margin-top: 4px; }
 .np-card { font-size: 8.5px; letter-spacing: 0; padding: 0 2px; overflow: hidden; }
+
+/* ---------- Update banner ---------- */
+.upd-banner {
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 20;
+  background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius);
+  padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.5); max-width: 520px; margin: 0 auto;
+}
+.upd-title { font-weight: 700; }
+.upd-build { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 4px; }
+.upd-msg { color: var(--muted); font-size: 13px; margin-top: 6px; min-height: 1em; }
+.upd-bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 10px; overflow: hidden; }
+.upd-bar span { display: block; height: 100%; width: 0; background: var(--gold); transition: width .2s; }
+.upd-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.upd-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

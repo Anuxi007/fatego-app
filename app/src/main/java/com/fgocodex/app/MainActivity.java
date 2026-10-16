@@ -16,6 +16,7 @@ public class MainActivity extends Activity {
 
     private static final String APP_HOST = "appassets.androidplatform.net";
     private WebView webView;
+    private Updater updater;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,6 +38,9 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
+
+        updater = new Updater(this, webView);
+        webView.addJavascriptInterface(updater, "AndroidApp");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -64,6 +68,12 @@ public class MainActivity extends Activity {
         } else {
             webView.loadUrl("https://" + APP_HOST + "/assets/index.html");
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (updater != null) updater.onResume();
     }
 
     @Override
