@@ -38,11 +38,21 @@ def main():
             return
 
     wars = get(f"{API}/export/JP/nice_war_lang_en.json")
+    # English names from the NA server when the quest exists there
+    na_names = {}
+    try:
+        for war in get(f"{API}/export/NA/nice_war.json"):
+            wname = (war.get("name") or war.get("longName") or "").replace("\n", " ")
+            for spot in war.get("spots", []):
+                for q in spot.get("quests", []):
+                    na_names[q["id"]] = (spot.get("name", ""), wname, q.get("name", ""))
+    except Exception as e:  # noqa: BLE001
+        print("NA names unavailable", e)
     quests = []
     for war in wars:
         if war.get("eventId", 0) or war["id"] >= 8000:
             continue
-        war_name = war.get("longName") or war.get("name") or ""
+        war_name = (war.get("name") or war.get("longName") or "").replace("\n", " ")
         for spot in war.get("spots", []):
             for q in spot.get("quests", []):
                 if q.get("type") != "free" or q.get("consumeType") not in ("ap", "apAndItem"):
@@ -50,9 +60,10 @@ def main():
                 phases = q.get("phases") or []
                 if not phases:
                     continue
+                spot_name, wname, qname = na_names.get(q["id"], (spot.get("name", ""), war_name, q.get("name", "")))
                 quests.append({
-                    "id": q["id"], "phase": max(phases), "name": q.get("name", ""),
-                    "spot": spot.get("name", ""), "war": war_name, "warId": war["id"],
+                    "id": q["id"], "phase": max(phases), "name": qname,
+                    "spot": spot_name, "war": wname, "warId": war["id"],
                     "ap": q.get("consume", 0),
                 })
     print(f"free quests: {len(quests)}")
