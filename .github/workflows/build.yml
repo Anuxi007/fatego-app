@@ -32,6 +32,7 @@ jobs:
         run: |
           cp data/es.json app/src/main/assets/es.json
           cp data/daily.json app/src/main/assets/daily.json
+          if [ -f data/drops.json ]; then cp data/drops.json app/src/main/assets/drops.json; fi
 
       - name: Check signing secret
         env:

@@ -5,3 +5,4 @@ local.properties
 .idea/
 app/src/main/assets/es.json
 app/src/main/assets/daily.json
+app/src/main/assets/drops.json
