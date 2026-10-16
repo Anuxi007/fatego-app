@@ -89,10 +89,18 @@ def main():
         json.dump(strings, f, ensure_ascii=False, indent=0)
     print(f"unique strings: {len(strings)} (japanese: {sum(1 for t in strings if JA_RE.search(t))})")
 
+    # Newest servants (for "new servant" notifications)
+    en = {x["id"]: x.get("name") for x in get(f"{API}/JP/basic_servant_lang_en.json")}
+    playable = [x for x in jp if x.get("collectionNo", 0) > 0]
+    newest = sorted(playable, key=lambda x: -x["collectionNo"])[:10]
+    na_by_no = sorted([x for x in na if x.get("collectionNo", 0) > 0], key=lambda x: -x["collectionNo"])[:10]
+
     out = {
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "na": na_ids,
         "np": np,
+        "newestJP": [{"id": x["id"], "no": x["collectionNo"], "name": en.get(x["id"]) or x.get("name")} for x in newest],
+        "newestNA": [{"id": x["id"], "no": x["collectionNo"], "name": x.get("name")} for x in na_by_no],
     }
     with open("data/index.json", "w", encoding="utf-8") as f:
         json.dump(out, f, separators=(",", ":"), sort_keys=True)
