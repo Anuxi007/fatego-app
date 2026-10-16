@@ -61,6 +61,34 @@ public class Updater {
         return a;
     }
 
+    /**
+     * Saves an image into Downloads/FGO Codex via the system download manager.
+     * Returns "ok", "perm" (storage permission requested on Android 8-9; try again) or "error".
+     */
+    @JavascriptInterface
+    public String saveImage(String url, String fileName) {
+        try {
+            if (Build.VERSION.SDK_INT < 29 && activity.checkSelfPermission(
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                activity.runOnUiThread(() -> activity.requestPermissions(
+                        new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 43));
+                return "perm";
+            }
+            String safe = fileName == null ? "image.png" : fileName.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+            if (safe.isEmpty()) safe = "image.png";
+            android.app.DownloadManager.Request req = new android.app.DownloadManager.Request(Uri.parse(url));
+            req.setTitle(safe);
+            req.setMimeType("image/png");
+            req.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            req.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, "FGO Codex/" + safe);
+            android.app.DownloadManager dm = (android.app.DownloadManager) activity.getSystemService(android.content.Context.DOWNLOAD_SERVICE);
+            dm.enqueue(req);
+            return "ok";
+        } catch (Exception e) {
+            return "error";
+        }
+    }
+
     @JavascriptInterface
     public void setLanguage(String lang) {
         activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE)

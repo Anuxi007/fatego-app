@@ -269,6 +269,8 @@ function route() {
   view.onclick = null;
   view.oninput = null;
   document.documentElement.lang = settings.ui;
+  document.body.classList.toggle("on-detail", r.name === "detail");
+  updateBarSolid();
   if (r.name === "detail") renderDetail(r.id);
   else if (r.name === "settings") renderSettings();
   else if (r.name === "daily") renderDaily();
@@ -276,6 +278,14 @@ function route() {
   else if (r.name === "planEdit") renderPlanEdit(r.slot);
   else renderList();
 }
+
+// On the servant page the top bar floats over the artwork and turns solid once it scrolls past.
+function updateBarSolid() {
+  const hero = document.querySelector(".dhero");
+  const limit = hero ? hero.offsetHeight - 70 : 0;
+  document.body.classList.toggle("bar-solid", !document.body.classList.contains("on-detail") || window.scrollY > limit);
+}
+window.addEventListener("scroll", updateBarSolid, { passive: true });
 
 window.addEventListener("hashchange", () => {
   route();
@@ -566,52 +576,37 @@ async function renderDetail(id) {
   const region = svt._partial || settings.data === "ja" ? "JP" : "NA";
 
   view.innerHTML = `
-    <div class="d-head">
-      ${face ? `<img class="face" src="${esc(face)}" alt="" onerror="imgErr(this)">` : ""}
-      <div>
-        <h2 class="d-name">${esc(svt.name)}</h2>
-        <div class="d-sub">#${svt.collectionNo} · <span class="stars">${stars(svt.rarity)}</span> · ${esc(className(svt.className))}</div>
-        ${svt.originalName && svt.originalName !== svt.name ? `<div class="d-sub">${esc(svt.originalName)}</div>` : ""}
+    <div class="dhero">
+      ${art.length ? `<img id="heroImg" class="dhero-img" src="${esc(art[tab].url)}" alt="" onerror="imgErr(this)">` : ""}
+      <div class="dhero-shade"></div>
+      <div class="dhero-bottom">
+        <div class="dhero-title">
+          <div>
+            <div class="dhero-no">Nº ${svt.collectionNo}</div>
+            <h2 class="dhero-name">${esc(svt.name)}</h2>
+            <div class="dhero-tags">
+              <span class="htag"><img src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="imgErr(this)">${esc(className(svt.className))}</span>
+              <span class="htag stars-tag">${stars(svt.rarity)}</span>
+            </div>
+          </div>
+          ${art.length ? `<button class="dhero-zoom" id="zoomBtn" aria-label="Zoom"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>` : ""}
+        </div>
+        ${art.length > 1 ? artSelector(art, tab) : ""}
       </div>
     </div>
     ${svt._partial && t("notInNA") ? `<div class="notice">${esc(t("notInNA"))}</div>` : ""}
 
-    <div class="d-top">
-      <div class="d-art">
-        ${art.length ? `
-          <div class="hero"><img id="heroImg" class="hero-img" src="${esc(art[tab].url)}" alt="" onerror="imgErr(this)"></div>
-          ${art.length > 1 ? `<div class="asc-grid" id="artTabs">${art.map((a, i) =>
-            `<button class="chip ${i === tab ? "active" : ""}" data-i="${i}" title="${esc(a.label)}">${esc(a.short)}</button>`).join("")}</div>` : ""}
-        ` : ""}
-      </div>
-      <div class="card kv kv-side">
-        ${kvRow(`<img class="kv-cls" src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="this.replaceWith(document.createRange().createContextualFragment(icon('class')))">`, t("class"), esc(className(svt.className)))}
-        ${kvRow("attribute", t("attribute"), esc(attrName(svt.attribute)))}
-        ${kvRow(svt.gender === "male" ? "male" : svt.gender === "female" ? "female" : "unknown", t("gender"), esc((t("genders")[svt.gender]) || svt.gender || "–"))}
-        ${kvRow("cost", t("cost"), fmt(svt.cost))}
-        ${kvRow("star", t("starGen"), pct(svt.starGen))}
-        ${kvRow("magnet", t("starAbsorb"), fmt(svt.starAbsorb))}
-        ${kvRow("skull", t("deathRate"), pct(svt.instantDeathChance))}
-        ${kvRow("level", t("maxLevel"), fmt(svt.lvMax))}
-      </div>
+    <div class="section">
+      <h2>${esc(t("profile"))}</h2>
+      ${profileCard(svt)}
     </div>
 
     <div class="section">
-      <h2>${esc(t("stats"))}</h2>
-      <div class="card">
-        <table class="stat-table">
-          <tr><th></th><th>${esc(t("base"))}</th><th>${esc(t("max"))} (Lv${svt.lvMax})</th>${grail(svt, 120) ? "<th>Lv120</th>" : ""}</tr>
-          <tr><td>ATK</td><td>${fmt(svt.atkBase)}</td><td>${fmt(svt.atkMax)}</td>${grail(svt, 120) ? `<td>${fmt(svt.atkGrowth[119])}</td>` : ""}</tr>
-          <tr><td>HP</td><td>${fmt(svt.hpBase)}</td><td>${fmt(svt.hpMax)}</td>${grail(svt, 120) ? `<td>${fmt(svt.hpGrowth[119])}</td>` : ""}</tr>
-        </table>
-      </div>
+      <h2>${esc(t("stats"))} · Lv ${svt.lvMax}</h2>
+      ${statsCard(svt)}
     </div>
 
-    ${svt.cards && svt.cards.length ? `
-    <div class="section">
-      <h2>${esc(t("cards"))}</h2>
-      <div class="deck">${svt.cards.map((c) => cardFace(c)).join("")}</div>
-    </div>` : ""}
+    ${cardsSection(svt)}
 
     ${levelSection("skills", t("skills"), versionsPerNum(svt.skills), svt.skillMaterials)}
     ${levelSection("np", t("np"), npList(svt), null)}
@@ -637,7 +632,231 @@ async function renderDetail(id) {
     const img = $("#heroImg");
     img.style.visibility = "";
     img.src = art[i].url;
-    tabs.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === b));
+    tabs.querySelectorAll("[data-i]").forEach((c) => c.classList.toggle("on", c === b));
+  });
+  const openViewer = () => showViewer(svt.name, art, state.ascTab[id] || 0, (i) => {
+    // keep the detail page in sync with the image chosen in the viewer
+    state.ascTab[id] = i;
+    const img = $("#heroImg"); if (img) img.src = art[i].url;
+    if (tabs) tabs.querySelectorAll("[data-i]").forEach((c) => c.classList.toggle("on", Number(c.dataset.i) === i));
+  });
+  const zb = $("#zoomBtn");
+  if (zb) zb.addEventListener("click", openViewer);
+  const hi = $("#heroImg");
+  if (hi) hi.addEventListener("click", openViewer);
+}
+
+// ---------- Detail: hero, profile, stats, cards ----------
+function artSelector(art, tab) {
+  const asc = art.filter((a) => a.kind === "asc");
+  const extra = art.filter((a) => a.kind !== "asc");
+  const btn = (a) => {
+    const i = art.indexOf(a);
+    return `<button class="asel ${i === tab ? "on" : ""}" data-i="${i}">${esc(a.short)}</button>`;
+  };
+  return `<div class="artsel" id="artTabs">
+    <div class="asel-row" style="grid-template-columns:repeat(${Math.max(asc.length, 1)},1fr)">${asc.map(btn).join("")}</div>
+    ${extra.length ? `<div class="asel-row" style="grid-template-columns:repeat(${Math.min(extra.length, 3)},1fr)">${extra.map(btn).join("")}</div>` : ""}
+  </div>`;
+}
+
+function ring(value, fraction, color, label) {
+  const p = Math.max(0, Math.min(1, fraction)) * 100;
+  return `<div class="ring-cell">
+    <div class="ring" style="background:conic-gradient(${color} 0 ${p}%, var(--surface-2) 0)"><span>${value}</span></div>
+    <small>${esc(label)}</small></div>`;
+}
+function bar(fraction, grad) {
+  const p = Math.max(0, Math.min(1, fraction)) * 100;
+  return `<span class="mbar"><i style="width:${p}%;background:${grad}"></i></span>`;
+}
+function currentNp(svt) {
+  const nps = svt.noblePhantasms || [];
+  return nps.length ? nps[nps.length - 1] : null;
+}
+const ALIGN_ORDER = ["Lawful", "Neutral", "Chaotic", "Good", "Balanced", "Evil", "Madness", "Summer", "Bride"];
+function alignment(svt) {
+  const have = new Set((svt.traits || []).map((x) => x && x.name).filter(Boolean));
+  const words = ALIGN_ORDER.filter((k) => have.has("alignment" + k)).map((k) => (t("align")[k]) || k);
+  return words.length ? words.join(" · ") : "–";
+}
+function regionLabel(svt) {
+  if (state.index) return state.index.na.has(svt.id) ? "NA · JP" : "JP";
+  return svt._partial ? "JP" : "NA · JP";
+}
+function pct2(v) {
+  return v == null ? "–" : num(v / 100, 2) + "%";
+}
+function profileCard(svt) {
+  const np = currentNp(svt);
+  const g = np && np.npGain;
+  const atk = g && g.np && g.np.length ? g.np[0] : null;
+  const def = g && g.defence && g.defence.length ? g.defence[0] : null;
+  const gender = (t("genders")[svt.gender]) || svt.gender || "–";
+  return `<div class="card pcard">
+    <div class="p-rings">
+      ${ring(pct(svt.starGen), (svt.starGen || 0) / 300, "#fde047", t("starGenShort"))}
+      ${ring(fmt(svt.starAbsorb), (svt.starAbsorb || 0) / 200, "#67e8f9", t("absorbShort"))}
+      ${ring(pct(svt.instantDeathChance), (svt.instantDeathChance || 0) / 500, "#f472b6", t("deathShort"))}
+    </div>
+    ${g ? `<div class="p-np">
+      <div><small>${esc(t("npGainHit"))}</small><b>${pct2(atk)}</b>${bar((atk || 0) / 100, "linear-gradient(90deg,#60a5fa,#a78bfa)")}</div>
+      <div><small>${esc(t("npGainDef"))}</small><b>${pct2(def)}</b>${bar((def || 0) / 500, "linear-gradient(90deg,#34d399,#67e8f9)")}</div>
+    </div>` : ""}
+    <div class="p-kv">
+      <div><small>${esc(t("attribute"))}</small><b>${esc(attrName(svt.attribute))}</b></div>
+      <div><small>${esc(t("gender"))}</small><b>${esc(gender)}</b></div>
+      <div><small>${esc(t("alignment"))}</small><b>${esc(alignment(svt))}</b></div>
+    </div>
+    <div class="p-foot">
+      <span>${esc(t("cost"))} <b>${fmt(svt.cost)}</b></span>
+      <span>${esc(t("maxLvShort"))} <b>${fmt(svt.lvMax)}</b></span>
+      <span>${esc(t("regionShort"))} <b>${regionLabel(svt)}</b></span>
+    </div>
+  </div>`;
+}
+function statsCard(svt) {
+  const g120 = grail(svt, 120);
+  const atk120 = g120 ? svt.atkGrowth[119] : null;
+  const hp120 = g120 ? svt.hpGrowth[119] : null;
+  return `<div class="card scard">
+    <div class="srow"><span>ATK</span>${bar(svt.atkMax / 14000, "linear-gradient(90deg,#ff8a5b,#ffb36b)")}<em>${fmt(svt.atkMax)}</em></div>
+    <div class="srow"><span>HP</span>${bar(svt.hpMax / 16000, "linear-gradient(90deg,#4fd1a5,#7be3c0)")}<em>${fmt(svt.hpMax)}</em></div>
+    <div class="ssub"><span>${esc(t("base"))} ${fmt(svt.atkBase)} / ${fmt(svt.hpBase)}</span>${g120 ? `<span>Lv120 ${fmt(atk120)} / ${fmt(hp120)}</span>` : ""}</div>
+  </div>`;
+}
+function cardImg(type) {
+  if (type === "extra") return `<span class="cmini ex"><img src="cards/card_txt_extra.png" alt=""></span>`;
+  return `<span class="cmini"><img src="cards/card_icon_${type}.png" alt=""></span>`;
+}
+function cardsSection(svt) {
+  if (!svt.cards || !svt.cards.length) return "";
+  const det = svt.cardDetails || {};
+  const hits = (k) => det[k] && det[k].hitsDistribution ? det[k].hitsDistribution.length : null;
+  const np = currentNp(svt);
+  const npType = np ? CARD_TYPES[String(np.card)] : null;
+  const cells = ["quick", "arts", "buster", "extra"].filter((k) => hits(k) != null).map((k) => `
+    <div class="hit">${cardImg(k)}<b>${hits(k)}</b><small>${esc(t("card_" + k))}</small></div>`);
+  if (np && npType) {
+    cells.push(`<div class="hit np">
+      <span class="cmini"><img src="cards/card_icon_${npType}.png" alt=""><i>NP</i></span>
+      <b>${(np.npDistribution || []).length || "–"}</b><small>NP · ${esc(t("card_" + npType))}</small></div>`);
+  }
+  return `
+    <div class="section">
+      <h2>${esc(t("cards"))}</h2>
+      <div class="deck">${svt.cards.map((c) => cardFace(c)).join("")}</div>
+    </div>
+    ${cells.length ? `<div class="section">
+      <h2>${esc(t("hits"))}</h2>
+      <div class="card hits" style="grid-template-columns:repeat(${cells.length},1fr)">${cells.join("")}</div>
+    </div>` : ""}`;
+}
+
+// ---------- Full-screen image viewer ----------
+function showViewer(name, art, start, onChange) {
+  let i = start;
+  const el = document.createElement("div");
+  el.className = "viewer";
+  el.innerHTML = `
+    <div class="v-bg"></div>
+    <div class="v-stage"><img class="v-img" alt=""></div>
+    <div class="v-top">
+      <button class="v-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <div class="v-t"><b>${esc(name)}</b><small></small></div>
+    </div>
+    <div class="v-bottom">
+      ${art.length > 1 ? `<div class="v-dots">${art.map(() => "<i></i>").join("")}</div>` : ""}
+      <button class="v-dl"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>${esc(t("download"))}</button>
+      <div class="v-hint">${esc(art.length > 1 ? t("viewerHint") : t("viewerHintZoom"))}</div>
+    </div>`;
+  document.body.appendChild(el);
+  document.body.classList.add("viewer-open");
+  const img = el.querySelector(".v-img");
+  const bg = el.querySelector(".v-bg");
+  let z = { s: 1, x: 0, y: 0 };
+  const apply = (anim) => {
+    img.style.transition = anim ? "transform .2s" : "none";
+    img.style.transform = `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
+  };
+  const show = (n) => {
+    i = (n + art.length) % art.length;
+    z = { s: 1, x: 0, y: 0 }; apply(false);
+    img.src = art[i].url;
+    bg.style.backgroundImage = `url("${art[i].url}")`;
+    el.querySelector(".v-t small").textContent = `${art[i].label}${art.length > 1 ? ` · ${i + 1} / ${art.length}` : ""}`;
+    el.querySelectorAll(".v-dots i").forEach((d, k) => d.classList.toggle("on", k === i));
+    if (onChange) onChange(i);
+  };
+  show(i);
+
+  let closed = false;
+  const close = (fromPop) => {
+    if (closed) return; closed = true;
+    window.removeEventListener("popstate", onPop);
+    el.classList.add("out");
+    document.body.classList.remove("viewer-open");
+    setTimeout(() => el.remove(), 180);
+    if (!fromPop) history.back();
+  };
+  const onPop = () => close(true);
+  history.pushState({ viewer: 1 }, "");
+  window.addEventListener("popstate", onPop);
+  el.querySelector(".v-close").addEventListener("click", () => close(false));
+
+  el.querySelector(".v-dl").addEventListener("click", () => {
+    const a = art[i];
+    const file = `${name} - ${a.label}.png`;
+    const app = nativeApp();
+    if (app && app.saveImage) {
+      const r = app.saveImage(a.url, file);
+      toast(t(r === "ok" ? "downloading" : r === "perm" ? "permRetry" : "downloadError"));
+    } else {
+      window.open(a.url, "_blank");
+    }
+  });
+
+  // gestures: swipe to change image, pinch / double tap to zoom, drag to pan when zoomed
+  const stage = el.querySelector(".v-stage");
+  let g = null, lastTap = 0;
+  const dist = (t1, t2) => Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+  stage.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) {
+      g = { mode: "pinch", d0: dist(e.touches[0], e.touches[1]), s0: z.s, x0: z.x, y0: z.y };
+    } else if (e.touches.length === 1) {
+      const tt = e.touches[0];
+      g = { mode: z.s > 1 ? "pan" : "swipe", sx: tt.clientX, sy: tt.clientY, x0: z.x, y0: z.y, dx: 0 };
+    }
+  }, { passive: true });
+  stage.addEventListener("touchmove", (e) => {
+    if (!g) return;
+    if (g.mode === "pinch" && e.touches.length === 2) {
+      z.s = Math.max(1, Math.min(4, g.s0 * dist(e.touches[0], e.touches[1]) / g.d0));
+      if (z.s === 1) { z.x = 0; z.y = 0; }
+      apply(false);
+    } else if (e.touches.length === 1) {
+      const tt = e.touches[0];
+      if (g.mode === "pan") { z.x = g.x0 + tt.clientX - g.sx; z.y = g.y0 + tt.clientY - g.sy; apply(false); }
+      else if (g.mode === "swipe") { g.dx = tt.clientX - g.sx; img.style.transition = "none"; img.style.transform = `translateX(${g.dx}px)`; }
+    }
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  stage.addEventListener("touchend", (e) => {
+    if (!g || e.touches.length) return;
+    const was = g; g = null;
+    if (was.mode === "swipe") {
+      if (art.length > 1 && Math.abs(was.dx) > 60) show(i + (was.dx < 0 ? 1 : -1));
+      else {
+        apply(true);
+        const now = Date.now();
+        if (Math.abs(was.dx) < 8 && now - lastTap < 300) { z = { s: 2.5, x: 0, y: 0 }; apply(true); lastTap = 0; return; }
+        lastTap = now;
+      }
+    } else if (was.mode === "pan") {
+      const now = Date.now();
+      if (now - lastTap < 300) { z = { s: 1, x: 0, y: 0 }; apply(true); lastTap = 0; return; }
+      lastTap = now;
+    }
   });
 }
 
@@ -712,7 +931,7 @@ function artworks(svt) {
   const out = [];
   const asc = g.ascension || {};
   Object.keys(asc).sort((a, b) => Number(a) - Number(b)).forEach((k) => {
-    out.push({ label: `${t("stage")} ${k}`, short: `${t("stageShort")} ${k}`, url: asc[k] });
+    out.push({ kind: "asc", label: `${t("stage")} ${k}`, short: `${t("stageShort")} ${k}`, url: asc[k] });
   });
   const cos = g.costume || {};
   const costumeNames = {};
@@ -720,8 +939,9 @@ function artworks(svt) {
     for (const k in svt.profile.costume) costumeNames[k] = svt.profile.costume[k].shortName || svt.profile.costume[k].name;
   }
   Object.keys(cos).forEach((k, i) => {
-    const label = costumeNames[k] || `${t("art")} ${i + 1}`;
-    out.push({ label, short: label, url: cos[k] });
+    const n = Object.keys(cos).length;
+    const label = costumeNames[k] || (n > 1 ? `${t("costume")} ${i + 1}` : t("costume"));
+    out.push({ kind: "costume", label, short: label, url: cos[k] });
   });
   return out;
 }
@@ -736,7 +956,7 @@ function grail(svt, lv) {
 }
 function cardFace(c) {
   const type = CARD_TYPES[String(c)] || "buster";
-  return `<div class="cardface c-${type}">${type.toUpperCase()}</div>`;
+  return `<div class="cardface c-${type}"><img class="cf-bg" src="cards/card_bg_${type}.png" alt=""><img class="cf-ic" src="cards/card_icon_${type}.png" alt=""><img class="cf-tx" src="cards/card_txt_${type}.png" alt=""></div>`;
 }
 
 function npList(svt) {
