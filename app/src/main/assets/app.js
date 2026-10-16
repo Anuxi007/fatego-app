@@ -249,14 +249,16 @@ function currentRoute() {
   if (h.startsWith("s/")) return { name: "detail", id: h.slice(2) };
   if (h === "settings") return { name: "settings" };
   if (h === "daily") return { name: "daily" };
+  if (h === "plan") return { name: "plan" };
+  if (h.startsWith("plan/")) return { name: "planEdit", slot: Number(h.slice(5)) };
   return { name: "list" };
 }
 
 function setHeader(title, showBack) {
   $("#title").innerHTML = title;
   $("#backBtn").classList.toggle("hidden", !showBack);
-  $("#settingsBtn").classList.toggle("hidden", currentRoute().name === "settings");
-  $("#dailyBtn").classList.toggle("hidden", currentRoute().name === "daily");
+  $("#menuBtn").classList.toggle("hidden", !!showBack);
+  closeDrawer();
 }
 
 let lastListScroll = 0;
@@ -266,6 +268,8 @@ function route() {
   if (r.name === "detail") renderDetail(r.id);
   else if (r.name === "settings") renderSettings();
   else if (r.name === "daily") renderDaily();
+  else if (r.name === "plan") renderPlan();
+  else if (r.name === "planEdit") renderPlanEdit(r.slot);
   else renderList();
 }
 
@@ -275,13 +279,31 @@ window.addEventListener("hashchange", () => {
 $("#backBtn").addEventListener("click", () => {
   if (history.length > 1) history.back(); else location.hash = "#/";
 });
-$("#dailyBtn").addEventListener("click", () => {
+// ---------- Side menu ----------
+const MENU = [
+  { route: "list", hash: "#/", key: "menuServants", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>' },
+  { route: "plan", hash: "#/plan", key: "plan", icon: '<path d="M4 20h16M7 16V9M12 16V5M17 16v-4"/>' },
+  { route: "daily", hash: "#/daily", key: "daily", icon: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>' },
+  { route: "settings", hash: "#/settings", key: "settings", icon: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>' },
+];
+function openDrawer() {
+  const cur = currentRoute().name;
+  $("#drawerItems").innerHTML = MENU.map((m) => `
+    <a class="drawer-item ${cur === m.route || (m.route === "plan" && cur === "planEdit") ? "active" : ""}" href="${m.hash}">
+      <svg viewBox="0 0 24 24" class="ic">${m.icon}</svg><span>${esc(t(m.key))}</span>
+    </a>`).join("");
+  document.body.classList.add("drawer-open");
+}
+function closeDrawer() {
+  document.body.classList.remove("drawer-open");
+}
+$("#menuBtn").addEventListener("click", () => {
   if (currentRoute().name === "list") lastListScroll = window.scrollY;
-  location.hash = "#/daily";
+  openDrawer();
 });
-$("#settingsBtn").addEventListener("click", () => {
-  if (currentRoute().name === "list") lastListScroll = window.scrollY;
-  location.hash = "#/settings";
+$("#drawerShade").addEventListener("click", closeDrawer);
+$("#drawerItems").addEventListener("click", (e) => {
+  if (e.target.closest("a")) closeDrawer();
 });
 
 // ---------- Views: states ----------
@@ -1133,7 +1155,7 @@ function renderDailyDay() {
 }
 
 async function renderDaily() {
-  setHeader(esc(t("daily")), true);
+  setHeader(esc(t("daily")), false);
   renderLoading();
   try { await loadDaily(); } catch (e) { return renderError(renderDaily); }
   if (currentRoute().name !== "daily") return;
@@ -1158,9 +1180,352 @@ async function renderDaily() {
   renderDailyDay();
 }
 
+
+// ---------- Upgrade plan ----------
+const PLAN_SLOTS = 5;
+function loadPlan() {
+  const p = store.get("plan", null);
+  const arr = Array.isArray(p) ? p.slice(0, PLAN_SLOTS) : [];
+  while (arr.length < PLAN_SLOTS) arr.push(null);
+  return arr;
+}
+function savePlan(p) { store.set("plan", p); }
+function pad2(n) { return String(n).padStart(2, "0"); }
+function planSummary(e) {
+  return {
+    skills: e.cur.s.map(pad2).join("/"),
+    append: e.cur.a.map(pad2).join("/"),
+  };
+}
+function newPlanEntry(s) {
+  return {
+    id: s.id, no: s.no, name: s.name, face: s.face, cls: s.cls, cid: s.cid, r: s.r,
+    cur: { asc: 0, s: [1, 1, 1], a: [0, 0, 0] },
+    tgt: { asc: 4, s: [10, 10, 10], a: [0, 0, 0] },
+  };
+}
+
+function addMats(map, items, mult) {
+  for (const it of items || []) {
+    const id = it.item.id || it.item.name;
+    const cur = map.get(id) || { item: it.item, amount: 0 };
+    cur.amount += it.amount * (mult || 1);
+    map.set(id, cur);
+  }
+}
+function matsList(map) {
+  return [...map.values()].sort((a, b) => (a.item.priority || 0) - (b.item.priority || 0) || (a.item.id || 0) - (b.item.id || 0));
+}
+function appendUnlock(svt, n) {
+  const ap = (svt.appendPassive || []).find((x) => x.num === n + 1) || (svt.appendPassive || [])[n];
+  return ap && ap.unlockMaterials ? ap.unlockMaterials : [];
+}
+// Materials for each track, either just the next step or everything up to the target.
+function planCost(svt, e, onlyNext) {
+  const total = { map: new Map(), qp: 0 };
+  const steps = [];
+  const add = (label, mats, extraItems) => {
+    const map = new Map();
+    let qp = 0;
+    if (mats) { addMats(map, mats.items); qp += mats.qp || 0; }
+    if (extraItems) addMats(map, extraItems);
+    for (const v of map.values()) addMats(total.map, [{ item: v.item, amount: v.amount }]);
+    total.qp += qp;
+    if (onlyNext) steps.push({ label, items: matsList(map), qp });
+  };
+  const asc = svt.ascensionMaterials || {};
+  for (let a = e.cur.asc; a < e.tgt.asc; a++) {
+    add(`${t("stage")} ${a} → ${a + 1}`, asc[String(a)]);
+    if (onlyNext) break;
+  }
+  const sm = svt.skillMaterials || {};
+  e.cur.s.forEach((c, i) => {
+    for (let l = c; l < e.tgt.s[i]; l++) {
+      add(`${t("skillsShort")} ${i + 1}: ${l} → ${l + 1}`, sm[String(l)]);
+      if (onlyNext) break;
+    }
+  });
+  const am = svt.appendSkillMaterials || {};
+  e.cur.a.forEach((c, i) => {
+    for (let l = c; l < e.tgt.a[i]; l++) {
+      if (l === 0) add(`${t("appendShort")} ${i + 1}: ${t("unlock")}`, null, appendUnlock(svt, i));
+      else add(`${t("appendShort")} ${i + 1}: ${l} → ${l + 1}`, am[String(l)]);
+      if (onlyNext) break;
+    }
+  });
+  return { steps, items: matsList(total.map), qp: total.qp };
+}
+
+function costBlock(c) {
+  if (!c.items.length && !c.qp) return `<p class="note">${esc(t("planDone"))}</p>`;
+  return `
+    <div class="mats-label"><span></span><span>QP ${fmt(c.qp)}</span></div>
+    ${matTiles(c.items)}`;
+}
+
+function planSlotHtml(e, i) {
+  if (!e) {
+    return `<button class="plan-slot empty" data-slot="${i}"><span class="plus">+</span><span>${esc(t("planAdd"))}</span></button>`;
+  }
+  const sum = planSummary(e);
+  return `
+    <button class="plan-slot" data-slot="${i}">
+      <img class="face" src="${esc(e.face)}" alt="" onerror="imgErr(this)">
+      <div class="plan-info">
+        <div class="svt-name">${esc(e.name)}</div>
+        <div class="plan-sum"><span>${esc(t("skillsShort"))}</span><b>${sum.skills}</b></div>
+        <div class="plan-sum"><span>${esc(t("appendShort"))}</span><b>${sum.append}</b></div>
+      </div>
+      <span class="plan-asc">${esc(t("stageShort"))} ${e.cur.asc}</span>
+    </button>`;
+}
+
+async function renderPlan() {
+  setHeader(esc(t("plan")), false);
+  const plan = loadPlan();
+  view.innerHTML = `
+    <p class="note" style="margin-top:0">${esc(t("planHint"))}</p>
+    <div class="plan-slots" id="planSlots">${plan.map(planSlotHtml).join("")}</div>
+    <div class="section" id="planTotal"></div>`;
+  bindLongPress($("#planSlots"), ".plan-slot:not(.empty)", (el) => openSlotSheet(Number(el.dataset.slot)));
+  $("#planSlots").addEventListener("click", (e) => {
+    const b = e.target.closest(".plan-slot"); if (!b || b.dataset.longpressed) { if (b) delete b.dataset.longpressed; return; }
+    const i = Number(b.dataset.slot);
+    if (b.classList.contains("empty")) openPicker(i);
+    else location.hash = "#/plan/" + i;
+  });
+  // Combined totals
+  const filled = plan.filter(Boolean);
+  if (!filled.length) return;
+  $("#planTotal").innerHTML = `<h2>${esc(t("planTotal"))}</h2><div class="card"><div class="spinner"></div></div>`;
+  try {
+    const map = new Map();
+    let qp = 0;
+    for (const e of filled) {
+      const svt = await loadServant(e.id);
+      const c = planCost(svt, e, false);
+      addMats(map, c.items);
+      qp += c.qp;
+    }
+    if (currentRoute().name !== "plan") return;
+    $("#planTotal").innerHTML = `<h2>${esc(t("planTotal"))}</h2><div class="card">${costBlock({ items: matsList(map), qp })}</div>`;
+  } catch (err) {
+    $("#planTotal").innerHTML = `<div class="state">${esc(t("loadError"))}</div>`;
+  }
+}
+
+function stepper(field, idx, value, min, max) {
+  return `
+    <div class="stepper" data-field="${field}" data-idx="${idx}" data-min="${min}" data-max="${max}">
+      <button data-d="-1">−</button><b>${value}</b><button data-d="1">+</button>
+    </div>`;
+}
+function planRow(label, cur, tgt, field, idx, min, max) {
+  return `
+    <div class="plan-row">
+      <span class="plan-row-label">${esc(label)}</span>
+      ${stepper("cur." + field, idx, cur, min, max)}
+      <span class="arrow">→</span>
+      ${stepper("tgt." + field, idx, tgt, min, max)}
+    </div>`;
+}
+
+async function renderPlanEdit(slot) {
+  const plan = loadPlan();
+  const e = plan[slot];
+  if (!e) { location.hash = "#/plan"; return; }
+  setHeader(esc(e.name), true);
+  renderLoading();
+  let svt;
+  try {
+    [svt] = await Promise.all([loadServant(e.id), loadTranslations()]);
+  } catch (err) { return renderError(() => renderPlanEdit(slot)); }
+  const r = currentRoute();
+  if (r.name !== "planEdit" || r.slot !== slot) return;
+
+  const draw = () => {
+    const next = planCost(svt, e, true);
+    const all = planCost(svt, e, false);
+    view.innerHTML = `
+      <div class="d-head">
+        <img class="face" src="${esc(e.face)}" alt="" onerror="imgErr(this)">
+        <div>
+          <h2 class="d-name">${esc(e.name)}</h2>
+          <div class="d-sub">#${e.no} · <span class="stars">${stars(e.r)}</span> · ${esc(className(e.cls))}</div>
+        </div>
+      </div>
+      <div class="section">
+        <h2>${esc(t("planLevels"))}</h2>
+        <div class="card" id="planForm">
+          <div class="plan-cols"><span></span><span>${esc(t("planCurrent"))}</span><span></span><span>${esc(t("planTarget"))}</span></div>
+          ${planRow(t("stage"), e.cur.asc, e.tgt.asc, "asc", 0, 0, 4)}
+          <div class="plan-sep">${esc(t("skills"))}</div>
+          ${[0, 1, 2].map((i) => planRow(`${t("skillsShort")} ${i + 1}`, e.cur.s[i], e.tgt.s[i], "s", i, 1, 10)).join("")}
+          <div class="plan-sep">${esc(t("appendSkills"))}</div>
+          ${[0, 1, 2].map((i) => planRow(`${t("appendShort")} ${i + 1}`, e.cur.a[i], e.tgt.a[i], "a", i, 0, 10)).join("")}
+          <div class="plan-quick">
+            <button class="chip" data-quick="max">${esc(t("planMaxAll"))}</button>
+            <button class="chip" data-quick="cur">${esc(t("planKeep"))}</button>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <h2>${esc(t("planNext"))}</h2>
+        <div class="card">
+          ${next.steps.length ? next.steps.map((st) => `
+            <div class="mats-stage">
+              <div class="mats-label"><span>${esc(st.label)}</span><span>${st.qp ? "QP " + fmt(st.qp) : ""}</span></div>
+              ${st.items.length ? matTiles(st.items) : ""}
+            </div>`).join("") : `<p class="note">${esc(t("planDone"))}</p>`}
+        </div>
+      </div>
+      <div class="section">
+        <h2>${esc(t("planToTarget"))}</h2>
+        <div class="card">${costBlock(all)}</div>
+      </div>`;
+    $("#planForm").addEventListener("click", (ev) => {
+      const q = ev.target.closest("[data-quick]");
+      if (q) {
+        if (q.dataset.quick === "max") e.tgt = { asc: 4, s: [10, 10, 10], a: [10, 10, 10] };
+        else e.tgt = JSON.parse(JSON.stringify(e.cur));
+        plan[slot] = e; savePlan(plan); draw(); return;
+      }
+      const btn = ev.target.closest("[data-d]"); if (!btn) return;
+      const st = btn.closest(".stepper");
+      const [which, field] = st.dataset.field.split(".");
+      const idx = Number(st.dataset.idx);
+      const min = Number(st.dataset.min), max = Number(st.dataset.max);
+      const get = (w) => (field === "asc" ? e[w].asc : e[w][field][idx]);
+      const set = (w, v) => { if (field === "asc") e[w].asc = v; else e[w][field][idx] = v; };
+      const v = Math.max(min, Math.min(max, get(which) + Number(btn.dataset.d)));
+      set(which, v);
+      // keep target >= current
+      if (get("tgt") < get("cur")) set(which === "cur" ? "tgt" : "cur", v);
+      plan[slot] = e; savePlan(plan);
+      const y = window.scrollY; draw(); window.scrollTo(0, y);
+    });
+  };
+  draw();
+}
+
+// ---------- Long press ----------
+function bindLongPress(root, selector, onLong) {
+  let timer = null, startX = 0, startY = 0, target = null;
+  const cancel = () => { clearTimeout(timer); timer = null; if (target) target.classList.remove("pressing"); target = null; };
+  root.addEventListener("pointerdown", (ev) => {
+    const el = ev.target.closest(selector); if (!el) return;
+    target = el; startX = ev.clientX; startY = ev.clientY;
+    el.classList.add("pressing");
+    timer = setTimeout(() => {
+      el.dataset.longpressed = "1";
+      el.classList.remove("pressing");
+      if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) { /* ignore */ } }
+      onLong(el);
+      timer = null;
+    }, 500);
+  });
+  root.addEventListener("pointermove", (ev) => {
+    if (timer && (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10)) cancel();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((n) => root.addEventListener(n, () => { if (timer) cancel(); }));
+  root.addEventListener("contextmenu", (ev) => { if (ev.target.closest(selector)) ev.preventDefault(); });
+}
+
+// ---------- Bottom sheet ----------
+function openSheet(html, onClick) {
+  const sh = $("#sheet");
+  sh.innerHTML = `<div class="sheet-shade" data-close="1"></div><div class="sheet-panel">${html}</div>`;
+  sh.classList.remove("hidden");
+  sh.onclick = (ev) => {
+    if (ev.target.closest("[data-close]")) { closeSheet(); return; }
+    onClick && onClick(ev);
+  };
+}
+function closeSheet() {
+  const sh = $("#sheet");
+  sh.classList.add("hidden");
+  sh.innerHTML = "";
+  sh.onclick = null;
+}
+function openSlotSheet(i) {
+  const plan = loadPlan();
+  const e = plan[i]; if (!e) return;
+  openSheet(`
+    <div class="sheet-title">${esc(e.name)}</div>
+    <button class="opt" data-act="change"><span>${esc(t("planChange"))}</span></button>
+    <button class="opt danger" data-act="remove"><span>${esc(t("planRemove"))}</span></button>
+    <button class="opt" data-close="1"><span>${esc(t("cancel"))}</span></button>`, (ev) => {
+    const b = ev.target.closest("[data-act]"); if (!b) return;
+    closeSheet();
+    if (b.dataset.act === "remove") {
+      plan[i] = null; savePlan(plan); renderPlan();
+    } else openPicker(i);
+  });
+}
+
+// ---------- Servant picker ----------
+async function openPicker(slot) {
+  if (!state.list || state.listLang !== settings.data) {
+    try { await loadList(false); } catch (e) { toast(t("loadError")); return; }
+  }
+  const pk = { q: "", cls: "all", r: "all" };
+  const present = new Map();
+  for (const s of state.list) { const g = classGroup(s.cls); if (!present.has(g)) present.set(g, s.cid); }
+  const classes = CLASS_ORDER.filter((c) => present.has(c)).concat([...present.keys()].filter((c) => !CLASS_ORDER.includes(c)));
+  openSheet(`
+    <div class="picker">
+      <div class="picker-top">
+        <input id="pkQ" class="search" type="search" placeholder="${esc(t("search"))}" autocomplete="off">
+        <button class="icon-btn" data-close="1" aria-label="Close">✕</button>
+      </div>
+      <div class="chips" id="pkCls">
+        <button class="chip active" data-cls="all">${esc(t("allClasses"))}</button>
+        ${classes.map((c) => `<button class="chip icon-only" data-cls="${esc(c)}"><img src="${classIcon(present.get(c), 5)}" alt="${esc(className(c))}" onerror="this.replaceWith(document.createTextNode(this.alt))"></button>`).join("")}
+      </div>
+      <div class="chips" id="pkR">
+        <button class="chip active" data-r="all">${esc(t("allRarities"))}</button>
+        ${[5, 4, 3, 2, 1, 0].map((r) => `<button class="chip" data-r="${r}">${r}★</button>`).join("")}
+      </div>
+      <div class="picker-list" id="pkList"></div>
+    </div>`, (ev) => {
+    const c = ev.target.closest("[data-cls]");
+    if (c) { pk.cls = c.dataset.cls; document.querySelectorAll("#pkCls .chip").forEach((x) => x.classList.toggle("active", x === c)); draw(); return; }
+    const r = ev.target.closest("[data-r]");
+    if (r) { pk.r = r.dataset.r; document.querySelectorAll("#pkR .chip").forEach((x) => x.classList.toggle("active", x === r)); draw(); return; }
+    const pick = ev.target.closest("[data-pick]");
+    if (pick) {
+      const s = state.list.find((x) => String(x.id) === pick.dataset.pick);
+      const plan = loadPlan();
+      plan[slot] = newPlanEntry(s);
+      savePlan(plan);
+      closeSheet();
+      location.hash = "#/plan/" + slot;
+    }
+  });
+  const draw = () => {
+    const q = norm(pk.q.trim());
+    const arr = state.list.filter((s) =>
+      (pk.cls === "all" || classGroup(s.cls) === pk.cls) &&
+      (pk.r === "all" || String(s.r) === pk.r) &&
+      (!q || norm(s.name).includes(q) || norm(s.orig).includes(q) || String(s.no) === q))
+      .sort((a, b) => b.no - a.no).slice(0, 150);
+    $("#pkList").innerHTML = arr.map((s) => `
+      <button class="svt" data-pick="${s.id}">
+        <img class="face" src="${esc(s.face)}" alt="" loading="lazy" onerror="imgErr(this)">
+        <div class="svt-main">
+          <div class="svt-name">${esc(s.name)}</div>
+          <div class="svt-meta"><span>${esc(className(s.cls))}</span><span class="stars">${stars(s.r)}</span></div>
+        </div>
+        <span class="no">#${s.no}</span>
+      </button>`).join("") || `<div class="state">${esc(t("noResults"))}</div>`;
+  };
+  $("#pkQ").addEventListener("input", (e) => { pk.q = e.target.value; draw(); });
+  draw();
+}
+
 // ---------- View: settings ----------
 function renderSettings() {
-  setHeader(esc(t("settings")), true);
+  setHeader(esc(t("settings")), false);
   view.innerHTML = `
     <div class="section">
       <h2>${esc(t("uiLanguage"))}</h2>
