@@ -1067,9 +1067,14 @@ async function loadDaily() {
 }
 
 function questsFor(kind, cls) {
-  return DAILY.quests
-    .filter((q) => q.kind === kind && q.classes.includes(cls))
-    .sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0));
+  // One quest per tier (keep the one with the most recorded runs)
+  const byTier = new Map();
+  for (const q of DAILY.quests) {
+    if (q.kind !== kind || !q.classes.includes(cls)) continue;
+    const prev = byTier.get(q.tier);
+    if (!prev || (q.runs || 0) > (prev.runs || 0)) byTier.set(q.tier, q);
+  }
+  return [...byTier.values()].sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0));
 }
 
 function dropRows(q) {
