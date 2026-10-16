@@ -921,7 +921,7 @@ function passiveSection(svt) {
 
 function matTiles(items) {
   return `<div class="mats">${items.map((it) => `
-    <div class="mat" title="${esc(it.item.name)}">
+    <div class="mat" title="${esc(it.item.name)}" data-item="${esc(it.item.id || "")}" data-iname="${esc(it.item.name)}" data-icon="${esc(it.item.icon)}">
       <img src="${esc(it.item.icon)}" alt="${esc(it.item.name)}" loading="lazy" onerror="imgErr(this)">
       <span>${fmt(it.amount)}</span>
     </div>`).join("")}</div>`;
@@ -1105,10 +1105,10 @@ function dropRows(q) {
   return q.drops.map((d) => {
     const perAp = d.rate > 0 ? q.ap / d.rate : 0;
     return `
-      <div class="drop">
+      <div class="drop" ${d.type === "item" ? `data-item="${d.id}" data-iname="${esc(d.name || "")}" data-icon="${esc(d.icon || "")}"` : ""}>
         <img src="${esc(d.icon || "")}" alt="" loading="lazy" onerror="imgErr(this)">
         <span class="drop-name">${esc(d.name || "")}</span>
-        <span class="drop-rate"><b>×${num(d.rate, 2)}</b><small>${perAp ? `${num(perAp, 1)} AP` : ""}</small></span>
+        <span class="drop-rate"><b>${num(d.rate * 100, 1)}%</b><small>${perAp ? `${num(perAp, 1)} AP/drop` : ""}</small></span>
       </div>`;
   }).join("");
 }
@@ -1574,6 +1574,83 @@ async function openPicker(slot) {
   $("#pkQ").addEventListener("input", (e) => { pk.q = e.target.value; draw(); });
   draw();
 }
+
+
+// ---------- Where to farm a material ----------
+const DROPS_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/drops.json";
+let DROPS = null;
+async function loadDrops() {
+  if (DROPS) return DROPS;
+  const cached = store.get("drops", null);
+  if (cached && cached.data) DROPS = cached.data;
+  if (!DROPS) {
+    try { DROPS = await getJSON("drops.json"); } catch (e) { /* not bundled */ }
+  }
+  if (!cached || Date.now() - cached.ts > LIST_TTL) {
+    try {
+      const data = await getJSON(DROPS_URL + "?t=" + Math.floor(Date.now() / 3600000));
+      DROPS = data;
+      store.set("drops", { ts: Date.now(), data });
+    } catch (e) { /* keep */ }
+  }
+  return DROPS;
+}
+
+function dailyDaysFor(kind, classes) {
+  const days = [];
+  for (let d = 1; d <= 7; d++) {
+    if (DAILY_SCHEDULE[kind][d].some((c) => classes.includes(c))) days.push(d);
+  }
+  if (days.length === 7) return t("everyDay");
+  return days.map((d) => t("weekdays")[d - 1].slice(0, 3)).join(", ");
+}
+
+async function openItemSheet(id, name, icon) {
+  openSheet(`<div class="state"><div class="spinner"></div>${esc(t("loading"))}</div>`);
+  const rows = [];
+  try { await loadDaily(); } catch (e) { /* optional */ }
+  try { await loadDrops(); } catch (e) { /* optional */ }
+  if (DAILY) {
+    for (const q of DAILY.quests) {
+      const d = q.drops.find((x) => x.type === "item" && String(x.id) === String(id));
+      if (!d || !d.rate) continue;
+      rows.push({
+        title: `${q.kind === "tg" ? "Training Grounds" : t("emberGathering")} · ${q.classes.map(className).join("/")} (${t("tiers")[q.tier] || "?"})`,
+        sub: `${t("daily")}: ${dailyDaysFor(q.kind, q.classes)}`,
+        ap: q.ap, runs: q.runs, rate: d.rate,
+      });
+    }
+  }
+  if (DROPS && DROPS.items[String(id)]) {
+    for (const [qi, rate] of DROPS.items[String(id)]) {
+      const q = DROPS.quests[qi];
+      rows.push({ title: q.spot || q.name, sub: q.war, ap: q.ap, runs: q.runs, rate });
+    }
+  }
+  rows.sort((a, b) => a.ap / a.rate - b.ap / b.rate);
+  const top = rows.slice(0, 15);
+  openSheet(`
+    <div class="item-head">
+      <img src="${esc(icon)}" alt="" onerror="imgErr(this)">
+      <div><div class="sheet-title" style="padding:0">${esc(name)}</div><div class="d-sub">${esc(t("whereFarm"))}</div></div>
+      <button class="icon-btn" data-close="1" aria-label="Close">✕</button>
+    </div>
+    ${top.length ? `
+      <div class="drops-head"><span>${esc(t("location"))}</span><span>${esc(t("ratePerRun"))}</span></div>
+      <div class="item-rows">${top.map((r) => `
+        <div class="drop">
+          <span class="drop-name"><b>${esc(r.title)}</b><small>${esc(r.sub)} · ${r.ap} AP · ${fmt(r.runs)} ${esc(t("runsShort"))}</small></span>
+          <span class="drop-rate"><b>${num(r.rate * 100, 1)}%</b><small>${num(r.ap / r.rate, 1)} AP/drop</small></span>
+        </div>`).join("")}</div>
+      <p class="footer-note" style="margin-top:12px">${esc(t("dropsNote"))}</p>`
+    : `<div class="state">${esc(t("noDrops"))}</div>`}`);
+}
+
+document.addEventListener("click", (ev) => {
+  const el = ev.target.closest("[data-item]");
+  if (!el || !el.dataset.item) return;
+  openItemSheet(el.dataset.item, el.dataset.iname || "", el.dataset.icon || "");
+});
 
 // ---------- View: settings ----------
 function renderSettings() {
