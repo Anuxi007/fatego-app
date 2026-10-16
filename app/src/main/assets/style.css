@@ -348,3 +348,20 @@ body.drawer-open .drawer-shade { opacity: 1; pointer-events: auto; }
 .picker-list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
 .picker-list .svt { width: 100%; text-align: left; border: 0; }
 .plan-slots { margin-top: 12px; }
+
+/* ---------- Plan tracks ---------- */
+.track + .track { margin-top: 10px; }
+.track-head { display: flex; align-items: center; gap: 10px; }
+.track-badge { width: 42px; height: 42px; border-radius: 8px; display: grid; place-items: center; background: var(--gold-soft); color: var(--gold); font-size: 18px; flex: 0 0 auto; }
+.track-title { flex: 1; min-width: 0; }
+.track-title .d-sub { margin: 0; font-size: 11.5px; }
+.track-range { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.track-range b { font-size: 18px; color: var(--text); }
+.track-range b[data-p="tgt"] { color: var(--gold); }
+.track-range span { color: var(--muted); }
+.track .lv-row { margin-top: 8px; }
+.track .lv-label { min-width: 64px; font-size: 12.5px; }
+.lv-slider.tgt { background: linear-gradient(to right, var(--blue) var(--fill), var(--line) var(--fill)); }
+.lv-slider.tgt::-webkit-slider-thumb { background: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+.track-mats { margin-top: 12px; }
+.track-done { color: var(--muted); font-size: 13px; margin-top: 4px; }

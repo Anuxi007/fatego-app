@@ -264,6 +264,8 @@ function setHeader(title, showBack) {
 let lastListScroll = 0;
 function route() {
   const r = currentRoute();
+  view.onclick = null;
+  view.oninput = null;
   document.documentElement.lang = settings.ui;
   if (r.name === "detail") renderDetail(r.id);
   else if (r.name === "settings") renderSettings();
@@ -1314,19 +1316,81 @@ async function renderPlan() {
   }
 }
 
-function stepper(field, idx, value, min, max) {
-  return `
-    <div class="stepper" data-field="${field}" data-idx="${idx}" data-min="${min}" data-max="${max}">
-      <button data-d="-1">−</button><b>${value}</b><button data-d="1">+</button>
-    </div>`;
+// Materials for one track (ascension, skill i or append i) from current to target
+function trackCost(svt, e, kind, i) {
+  const map = new Map();
+  let qp = 0;
+  const addStep = (mats, extra) => {
+    if (mats) { addMats(map, mats.items); qp += mats.qp || 0; }
+    if (extra) addMats(map, extra);
+  };
+  if (kind === "asc") {
+    const asc = svt.ascensionMaterials || {};
+    for (let a = e.cur.asc; a < e.tgt.asc; a++) addStep(asc[String(a)]);
+  } else if (kind === "s") {
+    const sm = svt.skillMaterials || {};
+    for (let l = e.cur.s[i]; l < e.tgt.s[i]; l++) addStep(sm[String(l)]);
+  } else {
+    const am = svt.appendSkillMaterials || {};
+    for (let l = e.cur.a[i]; l < e.tgt.a[i]; l++) {
+      if (l === 0) addStep(null, appendUnlock(svt, i));
+      else addStep(am[String(l)]);
+    }
+  }
+  return { items: matsList(map), qp };
 }
-function planRow(label, cur, tgt, field, idx, min, max) {
+
+function trackMatsHtml(c) {
+  if (!c.items.length && !c.qp) return `<div class="track-done">✓ ${esc(t("planDone"))}</div>`;
   return `
-    <div class="plan-row">
-      <span class="plan-row-label">${esc(label)}</span>
-      ${stepper("cur." + field, idx, cur, min, max)}
-      <span class="arrow">→</span>
-      ${stepper("tgt." + field, idx, tgt, min, max)}
+    <div class="mats-label"><span>${esc(t("planNeeded"))}</span><span>${c.qp ? "QP " + fmt(c.qp) : ""}</span></div>
+    ${matTiles(c.items)}`;
+}
+
+function planTracks(svt) {
+  const skills = versionsPerNum(svt.skills).map((x) => x.versions[x.versions.length - 1]);
+  const appends = appendList(svt).map((x) => x.versions[0]);
+  const tracks = [{ kind: "asc", i: 0, name: t("stage"), icon: "", min: 0, max: 4 }];
+  for (let i = 0; i < 3; i++) {
+    const sk = skills[i];
+    tracks.push({ kind: "s", i, name: sk ? sk.name : `${t("skillsShort")} ${i + 1}`, icon: sk ? sk.icon : "", min: 1, max: 10, tag: `${t("skillsShort")} ${i + 1}` });
+  }
+  for (let i = 0; i < 3; i++) {
+    const ap = appends[i];
+    tracks.push({ kind: "a", i, name: ap ? ap.name : `${t("appendShort")} ${i + 1}`, icon: ap ? ap.icon : "", min: 0, max: 10, tag: `${t("appendShort")} ${i + 1}` });
+  }
+  return tracks;
+}
+
+function trackGet(e, which, tr) {
+  return tr.kind === "asc" ? e[which].asc : e[which][tr.kind][tr.i];
+}
+function trackSet(e, which, tr, v) {
+  if (tr.kind === "asc") e[which].asc = v; else e[which][tr.kind][tr.i] = v;
+}
+
+function trackCard(svt, e, tr, n) {
+  const cur = trackGet(e, "cur", tr), tgt = trackGet(e, "tgt", tr);
+  const fill = (v) => ((v - tr.min) / (tr.max - tr.min)) * 100;
+  return `
+    <div class="card track" data-t="${n}">
+      <div class="track-head">
+        ${tr.icon ? `<img class="skill-icon" src="${esc(tr.icon)}" alt="" onerror="imgErr(this)">` : `<div class="track-badge">✦</div>`}
+        <div class="track-title">
+          ${tr.tag ? `<div class="d-sub">${esc(tr.tag)}</div>` : ""}
+          <div class="skill-name">${esc(tr.name)}</div>
+        </div>
+        <div class="track-range"><b data-p="cur">${cur}</b><span>→</span><b data-p="tgt">${tgt}</b></div>
+      </div>
+      <div class="lv-row">
+        <span class="lv-label">${esc(t("planCurrent"))}</span>
+        <input type="range" class="lv-slider" data-w="cur" min="${tr.min}" max="${tr.max}" step="1" value="${cur}" style="--fill:${fill(cur)}%">
+      </div>
+      <div class="lv-row">
+        <span class="lv-label">${esc(t("planTarget"))}</span>
+        <input type="range" class="lv-slider tgt" data-w="tgt" min="${tr.min}" max="${tr.max}" step="1" value="${tgt}" style="--fill:${fill(tgt)}%">
+      </div>
+      <div class="track-mats" data-p="mats">${trackMatsHtml(trackCost(svt, e, tr.kind, tr.i))}</div>
     </div>`;
 }
 
@@ -1342,10 +1406,10 @@ async function renderPlanEdit(slot) {
   } catch (err) { return renderError(() => renderPlanEdit(slot)); }
   const r = currentRoute();
   if (r.name !== "planEdit" || r.slot !== slot) return;
+  const tracks = planTracks(svt);
 
+  const summary = () => costBlock(planCost(svt, e, false));
   const draw = () => {
-    const next = planCost(svt, e, true);
-    const all = planCost(svt, e, false);
     view.innerHTML = `
       <div class="d-head">
         <img class="face" src="${esc(e.face)}" alt="" onerror="imgErr(this)">
@@ -1354,58 +1418,46 @@ async function renderPlanEdit(slot) {
           <div class="d-sub">#${e.no} · <span class="stars">${stars(e.r)}</span> · ${esc(className(e.cls))}</div>
         </div>
       </div>
-      <div class="section">
-        <h2>${esc(t("planLevels"))}</h2>
-        <div class="card" id="planForm">
-          <div class="plan-cols"><span></span><span>${esc(t("planCurrent"))}</span><span></span><span>${esc(t("planTarget"))}</span></div>
-          ${planRow(t("stage"), e.cur.asc, e.tgt.asc, "asc", 0, 0, 4)}
-          <div class="plan-sep">${esc(t("skills"))}</div>
-          ${[0, 1, 2].map((i) => planRow(`${t("skillsShort")} ${i + 1}`, e.cur.s[i], e.tgt.s[i], "s", i, 1, 10)).join("")}
-          <div class="plan-sep">${esc(t("appendSkills"))}</div>
-          ${[0, 1, 2].map((i) => planRow(`${t("appendShort")} ${i + 1}`, e.cur.a[i], e.tgt.a[i], "a", i, 0, 10)).join("")}
-          <div class="plan-quick">
-            <button class="chip" data-quick="max">${esc(t("planMaxAll"))}</button>
-            <button class="chip" data-quick="cur">${esc(t("planKeep"))}</button>
-          </div>
-        </div>
+      <div class="plan-quick">
+        <button class="chip" data-quick="max">${esc(t("planMaxAll"))}</button>
+        <button class="chip" data-quick="cur">${esc(t("planKeep"))}</button>
       </div>
-      <div class="section">
-        <h2>${esc(t("planNext"))}</h2>
-        <div class="card">
-          ${next.steps.length ? next.steps.map((st) => `
-            <div class="mats-stage">
-              <div class="mats-label"><span>${esc(st.label)}</span><span>${st.qp ? "QP " + fmt(st.qp) : ""}</span></div>
-              ${st.items.length ? matTiles(st.items) : ""}
-            </div>`).join("") : `<p class="note">${esc(t("planDone"))}</p>`}
-        </div>
-      </div>
-      <div class="section">
-        <h2>${esc(t("planToTarget"))}</h2>
-        <div class="card">${costBlock(all)}</div>
-      </div>`;
-    $("#planForm").addEventListener("click", (ev) => {
-      const q = ev.target.closest("[data-quick]");
-      if (q) {
-        if (q.dataset.quick === "max") e.tgt = { asc: 4, s: [10, 10, 10], a: [10, 10, 10] };
-        else e.tgt = JSON.parse(JSON.stringify(e.cur));
-        plan[slot] = e; savePlan(plan); draw(); return;
-      }
-      const btn = ev.target.closest("[data-d]"); if (!btn) return;
-      const st = btn.closest(".stepper");
-      const [which, field] = st.dataset.field.split(".");
-      const idx = Number(st.dataset.idx);
-      const min = Number(st.dataset.min), max = Number(st.dataset.max);
-      const get = (w) => (field === "asc" ? e[w].asc : e[w][field][idx]);
-      const set = (w, v) => { if (field === "asc") e[w].asc = v; else e[w][field][idx] = v; };
-      const v = Math.max(min, Math.min(max, get(which) + Number(btn.dataset.d)));
-      set(which, v);
-      // keep target >= current
-      if (get("tgt") < get("cur")) set(which === "cur" ? "tgt" : "cur", v);
-      plan[slot] = e; savePlan(plan);
-      const y = window.scrollY; draw(); window.scrollTo(0, y);
-    });
+      <div class="section"><h2>${esc(t("stage"))}</h2>${trackCard(svt, e, tracks[0], 0)}</div>
+      <div class="section"><h2>${esc(t("skills"))}</h2>${tracks.slice(1, 4).map((tr, k) => trackCard(svt, e, tr, k + 1)).join("")}</div>
+      <div class="section"><h2>${esc(t("appendSkills"))}</h2>${tracks.slice(4).map((tr, k) => trackCard(svt, e, tr, k + 4)).join("")}</div>
+      <div class="section"><h2>${esc(t("planSummary"))}</h2><div class="card" id="planSum">${summary()}</div></div>`;
   };
   draw();
+
+  view.onclick = (ev) => {
+    const q = ev.target.closest("[data-quick]"); if (!q) return;
+    if (q.dataset.quick === "max") e.tgt = { asc: 4, s: [10, 10, 10], a: [10, 10, 10] };
+    else e.tgt = JSON.parse(JSON.stringify(e.cur));
+    plan[slot] = e; savePlan(plan);
+    const y = window.scrollY; draw(); window.scrollTo(0, y);
+  };
+  view.oninput = (ev) => {
+    const sl = ev.target.closest(".lv-slider"); if (!sl) return;
+    const card = sl.closest(".track");
+    const tr = tracks[Number(card.dataset.t)];
+    const which = sl.dataset.w;
+    const v = Number(sl.value);
+    trackSet(e, which, tr, v);
+    // keep target >= current
+    if (which === "cur" && trackGet(e, "tgt", tr) < v) trackSet(e, "tgt", tr, v);
+    if (which === "tgt" && trackGet(e, "cur", tr) > v) trackSet(e, "cur", tr, v);
+    plan[slot] = e; savePlan(plan);
+    const fill = (x) => ((x - tr.min) / (tr.max - tr.min)) * 100 + "%";
+    card.querySelectorAll(".lv-slider").forEach((x) => {
+      const val = trackGet(e, x.dataset.w, tr);
+      if (Number(x.value) !== val) x.value = val;
+      x.style.setProperty("--fill", fill(val));
+    });
+    card.querySelector('[data-p="cur"]').textContent = trackGet(e, "cur", tr);
+    card.querySelector('[data-p="tgt"]').textContent = trackGet(e, "tgt", tr);
+    card.querySelector('[data-p="mats"]').innerHTML = trackMatsHtml(trackCost(svt, e, tr.kind, tr.i));
+    $("#planSum").innerHTML = summary();
+  };
 }
 
 // ---------- Long press ----------

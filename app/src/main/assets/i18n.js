@@ -1,6 +1,8 @@
 // UI translations. Game data itself comes from Atlas Academy in English or Japanese.
 const I18N = {
   es: {
+    planNeeded: "Necesitas",
+    planSummary: "Resumen: todo lo necesario",
     menuServants: "Servants",
     plan: "Plan de mejora",
     planAdd: "Agregar servant",
@@ -121,6 +123,8 @@ const I18N = {
     openAtlas: "Ver en Atlas Academy",
   },
   en: {
+    planNeeded: "You need",
+    planSummary: "Summary: everything needed",
     menuServants: "Servants",
     plan: "Upgrade plan",
     planAdd: "Add servant",
@@ -239,6 +243,8 @@ const I18N = {
     openAtlas: "View on Atlas Academy",
   },
   de: {
+    planNeeded: "Benötigt",
+    planSummary: "Zusammenfassung: alles Benötigte",
     menuServants: "Servants",
     plan: "Ausbauplan",
     planAdd: "Servant hinzufügen",
@@ -357,6 +363,8 @@ const I18N = {
     openAtlas: "Auf Atlas Academy ansehen",
   },
   ru: {
+    planNeeded: "Нужно",
+    planSummary: "Итого: всё необходимое",
     menuServants: "Слуги",
     plan: "План прокачки",
     planAdd: "Добавить слугу",
@@ -475,6 +483,8 @@ const I18N = {
     openAtlas: "Открыть на Atlas Academy",
   },
   ja: {
+    planNeeded: "必要素材",
+    planSummary: "まとめ：必要なもの全部",
     menuServants: "サーヴァント",
     plan: "育成計画",
     planAdd: "サーヴァントを追加",
