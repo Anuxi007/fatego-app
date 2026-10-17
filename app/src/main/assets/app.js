@@ -230,13 +230,13 @@ async function loadServant(id) {
   let svt;
   let partial = false;
   if (settings.data === "ja") {
-    svt = await getJSON(`${API}/nice/JP/servant/${id}`);
+    svt = await getJSON(`${API}/nice/JP/servant/${id}?lore=true`);
   } else {
     try {
-      svt = await getJSON(`${API}/nice/NA/servant/${id}`);
+      svt = await getJSON(`${API}/nice/NA/servant/${id}?lore=true`);
     } catch (e) {
       if (e.status !== 404) throw e;
-      svt = await getJSON(`${API}/nice/JP/servant/${id}?lang=en`);
+      svt = await getJSON(`${API}/nice/JP/servant/${id}?lang=en&lore=true`);
       partial = true;
     }
   }
@@ -602,7 +602,7 @@ async function renderDetail(id) {
     </div>
 
     <div class="section">
-      <h2>${esc(t("stats"))} · Lv ${svt.lvMax}</h2>
+      <h2>${esc(t("stats"))}</h2>
       ${statsCard(svt)}
     </div>
 
@@ -624,6 +624,13 @@ async function renderDetail(id) {
   bindLevelSection("np", npList(svt), null);
   bindLevelSection("append", appendList(svt), svt.appendSkillMaterials);
 
+  const seg = $("#statSeg");
+  if (seg) seg.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-lv]"); if (!b) return;
+    state.statLv = b.dataset.lv;
+    seg.querySelectorAll("[data-lv]").forEach((c) => c.classList.toggle("on", c === b));
+    $("#statBody").innerHTML = statsBody(svt, b.dataset.lv);
+  });
   const tabs = $("#artTabs");
   if (tabs) tabs.addEventListener("click", (e) => {
     const b = e.target.closest("[data-i]"); if (!b) return;
@@ -676,6 +683,15 @@ function currentNp(svt) {
 }
 const ALIGN_ORDER = ["Lawful", "Neutral", "Chaotic", "Good", "Balanced", "Evil", "Madness", "Summer", "Bride"];
 function alignment(svt) {
+  const lim = Array.isArray(svt.limits) && svt.limits.length ? svt.limits[svt.limits.length - 1] : null;
+  const st = (svt.profile && svt.profile.stats) || lim;
+  if (st && (st.policy || st.personality)) {
+    const cap = (w) => w ? w.charAt(0).toUpperCase() + w.slice(1) : "";
+    const words = [st.policy, st.personality]
+      .filter((w) => w && !["none", "unknown"].includes(w))
+      .map((w) => (t("align")[cap(w)]) || cap(w));
+    if (words.length) return words.join(" · ");
+  }
   const have = new Set((svt.traits || []).map((x) => x && x.name).filter(Boolean));
   const words = ALIGN_ORDER.filter((k) => have.has("alignment" + k)).map((k) => (t("align")[k]) || k);
   return words.length ? words.join(" · ") : "–";
@@ -715,14 +731,26 @@ function profileCard(svt) {
     </div>
   </div>`;
 }
+function statLevels(svt) {
+  const out = [{ key: "base", label: t("base"), atk: svt.atkBase, hp: svt.hpBase }];
+  out.push({ key: "max", label: `Lv${svt.lvMax}`, atk: svt.atkMax, hp: svt.hpMax });
+  if (grail(svt, 120)) out.push({ key: "120", label: "Lv120", atk: svt.atkGrowth[119], hp: svt.hpGrowth[119] });
+  return out;
+}
+function statsBody(svt, key) {
+  const lv = statLevels(svt).find((x) => x.key === key) || statLevels(svt)[1];
+  return `
+    <div class="srow"><span>ATK</span>${bar(lv.atk / 16500, "linear-gradient(90deg,#ff8a5b,#ffb36b)")}<em>${fmt(lv.atk)}</em></div>
+    <div class="srow"><span>HP</span>${bar(lv.hp / 19000, "linear-gradient(90deg,#4fd1a5,#7be3c0)")}<em>${fmt(lv.hp)}</em></div>`;
+}
 function statsCard(svt) {
-  const g120 = grail(svt, 120);
-  const atk120 = g120 ? svt.atkGrowth[119] : null;
-  const hp120 = g120 ? svt.hpGrowth[119] : null;
+  const lvls = statLevels(svt);
+  const cur = state.statLv && lvls.some((x) => x.key === state.statLv) ? state.statLv : "max";
   return `<div class="card scard">
-    <div class="srow"><span>ATK</span>${bar(svt.atkMax / 14000, "linear-gradient(90deg,#ff8a5b,#ffb36b)")}<em>${fmt(svt.atkMax)}</em></div>
-    <div class="srow"><span>HP</span>${bar(svt.hpMax / 16000, "linear-gradient(90deg,#4fd1a5,#7be3c0)")}<em>${fmt(svt.hpMax)}</em></div>
-    <div class="ssub"><span>${esc(t("base"))} ${fmt(svt.atkBase)} / ${fmt(svt.hpBase)}</span>${g120 ? `<span>Lv120 ${fmt(atk120)} / ${fmt(hp120)}</span>` : ""}</div>
+    <div class="stat-seg" id="statSeg" style="grid-template-columns:repeat(${lvls.length},1fr)">
+      ${lvls.map((x) => `<button class="asel ${x.key === cur ? "on" : ""}" data-lv="${x.key}">${esc(x.label)}</button>`).join("")}
+    </div>
+    <div id="statBody">${statsBody(svt, cur)}</div>
   </div>`;
 }
 function cardImg(type) {
@@ -732,7 +760,12 @@ function cardImg(type) {
 function cardsSection(svt) {
   if (!svt.cards || !svt.cards.length) return "";
   const det = svt.cardDetails || {};
-  const hits = (k) => det[k] && det[k].hitsDistribution ? det[k].hitsDistribution.length : null;
+  // the API keys card details either by name or by number (1 arts, 2 buster, 3 quick, 4 extra)
+  const CARD_NUM = { arts: "1", buster: "2", quick: "3", extra: "4" };
+  const hits = (k) => {
+    const d = det[k] || det[CARD_NUM[k]];
+    return d && d.hitsDistribution ? d.hitsDistribution.length : null;
+  };
   const np = currentNp(svt);
   const npType = np ? CARD_TYPES[String(np.card)] : null;
   const cells = ["quick", "arts", "buster", "extra"].filter((k) => hits(k) != null).map((k) => `
