@@ -6,7 +6,7 @@ import time
 import urllib.request
 
 API = "https://api.atlasacademy.io"
-SOON = 7 * 86400          # also keep banners starting within a week; the app hides them until they open
+SOON = 30 * 86400         # also keep announced banners (up to a month ahead); the app hides them until they open
 MAX_LEN = 120 * 86400     # skip permanent pools (story summon etc.)
 
 

@@ -631,6 +631,7 @@ async function renderDetail(id) {
       <h2>${esc(t("profile"))}</h2>
       ${profileCard(svt)}
     </div>
+    ${watchCard(svt)}
 
     <div class="section">
       <h2>${esc(t("stats"))}</h2>
@@ -734,6 +735,33 @@ function regionLabel(svt) {
 function pct2(v) {
   return v == null ? "–" : num(v / 100, 2) + "%";
 }
+// Follow a servant: notify when it is announced / starts a banner in NA and/or JP (off by default)
+function watchCard(svt) {
+  const app = nativeApp();
+  if (!app || !app.setWatch) return "";
+  const [na, jp] = String(app.getWatch(svt.id) || "0,0").split(",").map((x) => x === "1");
+  return `<div class="card watch" id="watchCard" data-id="${svt.id}">
+    <div class="watch-t">🔔 <span>${esc(t("watchHead"))}</span></div>
+    <div class="watch-opts">
+      <button class="rem ${na ? "on" : ""}" data-w="na">${na ? "✓ " : ""}NA</button>
+      <button class="rem ${jp ? "on" : ""}" data-w="jp">${jp ? "✓ " : ""}JP</button>
+    </div>
+  </div>`;
+}
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("#watchCard [data-w]");
+  if (!b) return;
+  const card = b.closest("#watchCard");
+  const id = Number(card.dataset.id);
+  const app = nativeApp();
+  const btns = card.querySelectorAll("[data-w]");
+  b.classList.toggle("on");
+  btns.forEach((x) => { x.textContent = (x.classList.contains("on") ? "✓ " : "") + x.dataset.w.toUpperCase(); });
+  const na = btns[0].classList.contains("on"), jp = btns[1].classList.contains("on");
+  const name = ($(".dhero-name") || {}).textContent || "";
+  const r = app.setWatch(id, name, na, jp);
+  toast(t(!na && !jp ? "watchOff" : r === "perm" ? "remPerm" : "watchOn"));
+});
 function profileCard(svt) {
   const np = currentNp(svt);
   const g = np && np.npGain;
@@ -2287,6 +2315,18 @@ function bannerOrig(b) {
   const raw = String(b.jname || b.name || "").replace(/\s*\n\s*/g, " ");
   return raw !== bannerName(b) ? raw : "";
 }
+// Full artwork of a featured servant (final ascension, falling back to the first one, then the face)
+function svtArt(id) {
+  const u = BANNERS && BANNERS.units[String(id)];
+  const base = `https://static.atlasacademy.io/JP/CharaGraph/${id}/${id}`;
+  return `<img src="${base}b@2.png" data-fb="${base}a@1.png|${esc((u && u.f) || "")}" alt="" loading="lazy" onerror="artFallback(this)">`;
+}
+window.artFallback = (img) => {
+  const list = (img.dataset.fb || "").split("|").filter(Boolean);
+  if (!list.length) { img.onerror = null; img.style.visibility = "hidden"; return; }
+  img.dataset.fb = list.slice(1).join("|");
+  img.src = list[0];
+};
 function unitFace(id, size) {
   const u = BANNERS && BANNERS.units[String(id)];
   if (!u) return "";
@@ -2326,15 +2366,20 @@ async function renderBanners() {
           `<button class="chip ${state.bannerKind === k ? "active" : ""}" data-k="${k}">${esc(l)}</button>`).join("")}
       </div>
       <div class="b-tz"><span>${esc(t("serverTime"))}: <b>${esc(tzLabel(region))}</b></span><span class="live"><i></i>${esc(t("activeN", { n: all.length }))}</span></div>
-      ${list.length ? `<div class="card b-list">${list.map((b) => {
+      ${list.length ? list.map((b) => {
         const left = b.end - now;
-        return `<div class="b-row ${left < 86400 ? "urg" : ""}" data-b="${b.id}">
-          <div class="b-l1"><span class="b-tag">${esc(b.type === "friendPoint" ? t("bnFp") : t("bnQuartz"))}</span><b class="b-nm">${esc(bannerName(b))}</b><span class="b-cd cd-txt" data-end="${b.end}">⏱ ${countdown(b.end)}</span></div>
-          ${b.f.length ? `<div class="b-faces">${b.f.slice(0, 8).map((id) => unitFace(id, 34)).join("")}${b.f.length > 8 ? `<span class="b-more">+${b.f.length - 8}</span>` : ""}</div>` : ""}
-          <div class="b-l3"><span>${esc(serverDate(b.start, region))}</span><span class="ar">→</span><span>${esc(serverDate(b.end, region))}</span></div>
-          <div class="bbar" data-end="${b.end}" data-start="${b.start}"><i style="width:${Math.min(100, ((now - b.start) / (b.end - b.start)) * 100)}%"></i></div>
+        const ids = b.f.slice(0, 6);
+        return `<div class="bnE ${left < 86400 ? "urg" : ""}" data-b="${b.id}">
+          <div class="bnE-art">${ids.length ? ids.map((id) => svtArt(id)).join("") : ""}</div>
+          <span class="b-tag">${esc(b.type === "friendPoint" ? t("bnFp") : t("bnQuartz"))}</span>
+          <span class="bnE-cd cd-txt" data-end="${b.end}">⏱ ${countdown(b.end)}</span>
+          <div class="bnE-txt">
+            <div class="bnE-nm">${esc(bannerName(b))}</div>
+            <div class="bnE-dt">${esc(serverDate(b.start, region))} → ${esc(serverDate(b.end, region))}</div>
+            <div class="bbar" data-end="${b.end}" data-start="${b.start}"><i style="width:${Math.min(100, ((now - b.start) / (b.end - b.start)) * 100)}%"></i></div>
+          </div>
         </div>`;
-      }).join("")}</div>` : `<div class="state">${esc(t("noBanners"))}</div>`}
+      }).join("") : `<div class="state">${esc(t("noBanners"))}</div>`}
       <p class="footer-note">${esc(t("bannersNote"))}</p>`;
     if (!bannerTimer) bannerTimer = setInterval(tickBanners, 1000);
   };
@@ -2372,15 +2417,59 @@ function openBannerSheet(region, id) {
     </div>
     <div class="bd-cd"><small>${esc(t("endsIn"))}</small><b class="cd-big" data-end="${b.end}">${countdown(b.end)}</b></div>
     <div class="b-tz" style="margin:8px 2px 0"><span>${esc(t("serverTime"))}: <b>${esc(tzLabel(region))}</b></span></div>
+    ${reminderBox(region, b)}
     ${svts.length ? `<h3 class="bd-h">${esc(t("featuredSvts"))} <span>${svts.length}</span></h3><div class="bd-list">${svts.map(row).join("")}</div>` : ""}
     ${ces.length ? `<h3 class="bd-h">${esc(t("featuredCes"))} <span>${ces.length}</span></h3><div class="bd-list">${ces.map(row).join("")}</div>` : ""}
   `, (ev) => {
+    const rm = ev.target.closest("[data-rem]");
+    if (rm) { toggleReminder(region, b, Number(rm.dataset.rem), rm); return; }
     const sv = ev.target.closest("[data-svt]");
     if (sv) { closeSheet(); location.hash = "#/s/" + sv.dataset.svt; return; }
     const ce = ev.target.closest("[data-ce]");
     if (ce) { closeSheet(); location.hash = "#/ce/" + ce.dataset.ce; }
   });
   if (!bannerTimer) bannerTimer = setInterval(tickBanners, 1000);
+}
+
+// Banner "ends soon" reminders (off by default). Banners that last a day or less only offer 12 h and 1 h.
+function reminderKey(region, b, h) { return `${region}:${b.id}:${h}`; }
+function reminderBox(region, b) {
+  const app = nativeApp();
+  if (!app || !app.scheduleReminder) return "";
+  const saved = store.get("bnRem", {});
+  const opts = b.end - b.start <= 86400 ? [12, 1] : [24, 12, 1];
+  const now = Date.now() / 1000;
+  return `<div class="rem-box">
+    <div class="rem-h">🔔 ${esc(t("remHead"))}</div>
+    <div class="rem-opts">${opts.map((h) => {
+      const past = b.end - h * 3600 <= now;
+      const on = !past && saved[reminderKey(region, b, h)];
+      return `<button class="rem ${on ? "on" : ""}" data-rem="${h}" ${past ? "disabled" : ""}>${on ? "✓ " : ""}${esc(t("remBefore", { h }))}</button>`;
+    }).join("")}</div>
+  </div>`;
+}
+function toggleReminder(region, b, h, btn) {
+  const app = nativeApp();
+  const saved = store.get("bnRem", {});
+  const key = reminderKey(region, b, h);
+  if (saved[key]) {
+    delete saved[key];
+    app.cancelReminder(key);
+    btn.classList.remove("on");
+    btn.textContent = t("remBefore", { h });
+  } else {
+    const at = (b.end - h * 3600) * 1000;
+    if (at <= Date.now()) return;
+    const r = app.scheduleReminder(key, at, `⏰ ${bannerName(b)}`, t("remText", { h, r: region }), "banners");
+    saved[key] = b.end;
+    btn.classList.add("on");
+    btn.textContent = "✓ " + t("remBefore", { h });
+    toast(t(r === "perm" ? "remPerm" : "remSet"));
+  }
+  // forget reminders of banners that already ended
+  const now = Date.now() / 1000;
+  for (const k in saved) if (saved[k] < now) delete saved[k];
+  store.set("bnRem", saved);
 }
 
 // ---------- Craft Essences ----------
@@ -2614,6 +2703,7 @@ window.__onLaunchAction = () => {
   const a = app.consumeLaunchAction();
   if (a === "update") checkForUpdate(true);
   else if (a.startsWith("servant:")) location.hash = "#/s/" + a.slice(8);
+  else if (a === "banners") location.hash = "#/banners";
 };
 window.__onLaunchAction();
 setTimeout(() => checkForUpdate(false), 1500);

@@ -109,6 +109,54 @@ public class Updater {
         if (on) activity.runOnUiThread(this::requestNotificationPermission);
     }
 
+    /** Banner reminder at a given time. Returns "ok", or "perm" when notification permission was just requested. */
+    @JavascriptInterface
+    public String scheduleReminder(String key, double atMillis, String title, String text, String action) {
+        ReminderWorker.schedule(activity, key, (long) atMillis, title, text, action, 0);
+        if (!notificationsAllowed()) { activity.runOnUiThread(this::requestNotificationPermission); return "perm"; }
+        return "ok";
+    }
+
+    @JavascriptInterface
+    public void cancelReminder(String key) {
+        ReminderWorker.cancel(activity, key);
+    }
+
+    /** Follow a servant: notify when it appears in an NA and/or JP banner. */
+    @JavascriptInterface
+    public String setWatch(int svtId, String name, boolean na, boolean jp) {
+        android.content.SharedPreferences p = activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE);
+        try {
+            org.json.JSONObject w = new org.json.JSONObject(p.getString("watch", "{}"));
+            if (!na && !jp) w.remove(String.valueOf(svtId));
+            else w.put(String.valueOf(svtId), new org.json.JSONObject().put("name", name).put("na", na).put("jp", jp));
+            p.edit().putString("watch", w.toString()).apply();
+        } catch (Exception e) {
+            return "error";
+        }
+        if (na || jp) CheckWorker.runWatchCheckNow(activity);
+        if ((na || jp) && !notificationsAllowed()) { activity.runOnUiThread(this::requestNotificationPermission); return "perm"; }
+        return "ok";
+    }
+
+    /** "na,jp" flags for a followed servant, e.g. "1,0". */
+    @JavascriptInterface
+    public String getWatch(int svtId) {
+        android.content.SharedPreferences p = activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE);
+        try {
+            org.json.JSONObject w = new org.json.JSONObject(p.getString("watch", "{}")).optJSONObject(String.valueOf(svtId));
+            if (w == null) return "0,0";
+            return (w.optBoolean("na") ? "1" : "0") + "," + (w.optBoolean("jp") ? "1" : "0");
+        } catch (Exception e) {
+            return "0,0";
+        }
+    }
+
+    private boolean notificationsAllowed() {
+        return Build.VERSION.SDK_INT < 33 || activity.checkSelfPermission(
+                android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
     void requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(
                 android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {

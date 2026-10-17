@@ -13,7 +13,10 @@ import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import androidx.work.Data;
 import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.ExistingWorkPolicy;
+import androidx.work.OneTimeWorkRequest;
 import androidx.work.Constraints;
 import androidx.work.NetworkType;
 import androidx.work.PeriodicWorkRequest;
@@ -39,6 +42,7 @@ public class CheckWorker extends Worker {
     static final String CHANNEL = "updates";
     private static final String RELEASES = "https://api.github.com/repos/Anuxi007/fatego-app/releases/latest";
     private static final String INDEX = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/index.json";
+    private static final String BANNERS = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/banners.json";
 
     public CheckWorker(@NonNull Context context, @NonNull WorkerParameters params) {
         super(context, params);
@@ -57,8 +61,13 @@ public class CheckWorker extends Worker {
     public Result doWork() {
         Context ctx = getApplicationContext();
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!p.getBoolean("notify", true)) return Result.success();
         String lang = p.getString("lang", "en");
+        // servant banner alerts are an explicit opt-in per servant, so they run even if general alerts are off
+        try {
+            checkWatched(ctx, p, lang);
+        } catch (Exception ignored) {
+        }
+        if (getInputData().getBoolean("watchOnly", false) || !p.getBoolean("notify", true)) return Result.success();
         try {
             checkRelease(ctx, p, lang);
         } catch (Exception ignored) {
@@ -114,6 +123,72 @@ public class CheckWorker extends Worker {
         notify(ctx, notifId, title, names.toString(), "servant", count == 1 ? firstId : 0);
     }
 
+    static void runWatchCheckNow(Context ctx) {
+        Constraints c = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+        OneTimeWorkRequest req = new OneTimeWorkRequest.Builder(CheckWorker.class)
+                .setConstraints(c)
+                .setInputData(new Data.Builder().putBoolean("watchOnly", true).build())
+                .build();
+        WorkManager.getInstance(ctx).enqueueUniqueWork("fgocodex-watch-now", ExistingWorkPolicy.REPLACE, req);
+    }
+
+    /** Servants the user asked to follow: notify when one shows up in a banner (announced / started). */
+    private void checkWatched(Context ctx, SharedPreferences p, String lang) throws Exception {
+        JSONObject watch = new JSONObject(p.getString("watch", "{}"));
+        if (watch.length() == 0) return;
+        JSONObject data = new JSONObject(fetch(BANNERS + "?t=" + (System.currentTimeMillis() / 600000)));
+        JSONObject regions = data.optJSONObject("regions");
+        if (regions == null) return;
+        java.util.Set<String> done = new java.util.HashSet<>(p.getStringSet("watchDone", new java.util.HashSet<>()));
+        long now = System.currentTimeMillis() / 1000;
+        for (String region : new String[]{"NA", "JP"}) {
+            JSONObject r = regions.optJSONObject(region);
+            if (r == null) continue;
+            JSONArray banners = r.optJSONArray("banners");
+            if (banners == null) continue;
+            String tz = region.equals("JP") ? "Asia/Tokyo" : "America/Los_Angeles";
+            for (int i = 0; i < banners.length(); i++) {
+                JSONObject b = banners.optJSONObject(i);
+                if (b == null) continue;
+                long start = b.optLong("start"), end = b.optLong("end");
+                if (end <= now) continue;
+                JSONArray f = b.optJSONArray("f");
+                if (f == null) continue;
+                for (int k = 0; k < f.length(); k++) {
+                    String id = String.valueOf(f.optLong(k));
+                    JSONObject w = watch.optJSONObject(id);
+                    if (w == null || !w.optBoolean(region.toLowerCase())) continue;
+                    String key = region + ":" + b.optLong("id") + ":" + id;
+                    if (done.contains(key)) continue;
+                    done.add(key);
+                    String name = w.optString("name", "Servant");
+                    int sid = Integer.parseInt(id);
+                    if (start > now) {
+                        post(ctx, key.hashCode(), S.get(lang, "watchAnn").replace("{name}", name).replace("{r}", region),
+                                S.get(lang, "watchAnnText").replace("{date}", fmtDate(start, tz, lang)) + " (" + region + ")",
+                                "servant", sid);
+                        ReminderWorker.schedule(ctx, "start-" + key, start * 1000L,
+                                S.get(lang, "watchStart").replace("{name}", name).replace("{r}", region),
+                                S.get(lang, "watchStartText").replace("{date}", fmtDate(end, tz, lang)),
+                                "servant", sid);
+                    } else {
+                        post(ctx, key.hashCode(), S.get(lang, "watchStart").replace("{name}", name).replace("{r}", region),
+                                S.get(lang, "watchStartText").replace("{date}", fmtDate(end, tz, lang)),
+                                "servant", sid);
+                    }
+                }
+            }
+        }
+        p.edit().putStringSet("watchDone", done).apply();
+    }
+
+    private static String fmtDate(long ts, String tz, String lang) {
+        java.util.Locale loc = lang.equals("ja") ? java.util.Locale.JAPAN : lang.equals("es") ? new java.util.Locale("es") : java.util.Locale.US;
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat(lang.equals("ja") ? "M/d (E) HH:mm z" : "EEE d MMM, HH:mm z", loc);
+        f.setTimeZone(java.util.TimeZone.getTimeZone(tz));
+        return f.format(new java.util.Date(ts * 1000L));
+    }
+
     static void ensureChannel(Context ctx, String lang) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel ch = new NotificationChannel(CHANNEL, S.get(lang, "channel"),
@@ -123,6 +198,10 @@ public class CheckWorker extends Worker {
     }
 
     private void notify(Context ctx, int id, String title, String text, String action, int servantId) {
+        post(ctx, id, title, text, action, servantId);
+    }
+
+    static void post(Context ctx, int id, String title, String text, String action, int servantId) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(ctx,
                 android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             return;
@@ -170,6 +249,10 @@ public class CheckWorker extends Worker {
                         case "newJP": return "Nuevo servant en JP";
                         case "newNA": return "Nuevo servant en NA";
                         case "channel": return "Actualizaciones y servants nuevos";
+                        case "watchAnn": return "📢 {name}: banner anunciado en {r}";
+                        case "watchAnnText": return "Empieza el {date}";
+                        case "watchStart": return "🎉 {name} ya tiene banner en {r}";
+                        case "watchStartText": return "Disponible hasta el {date}";
                     }
                     break;
                 case "ja":
@@ -179,6 +262,10 @@ public class CheckWorker extends Worker {
                         case "newJP": return "JPに新サーヴァント";
                         case "newNA": return "NAに新サーヴァント";
                         case "channel": return "アップデートと新サーヴァント";
+                        case "watchAnn": return "📢 {name}：{r}でピックアップ予告";
+                        case "watchAnnText": return "開始 {date}";
+                        case "watchStart": return "🎉 {name}：{r}でピックアップ開始";
+                        case "watchStartText": return "{date} まで";
                     }
                     break;
             }
@@ -187,6 +274,10 @@ public class CheckWorker extends Worker {
                 case "updText": return "Tap to update";
                 case "newJP": return "New servant in JP";
                 case "newNA": return "New servant in NA";
+                case "watchAnn": return "📢 {name}: banner announced in {r}";
+                case "watchAnnText": return "Starts {date}";
+                case "watchStart": return "🎉 {name} is on a banner in {r}";
+                case "watchStartText": return "Available until {date}";
                 default: return "Updates and new servants";
             }
         }
