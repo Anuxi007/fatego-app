@@ -949,7 +949,32 @@ const TRAIT_NAMES = {
   weakToEnumaElish: "Weak to Enuma Elish", genderCaenisServant: "Caenis",
   attributeSky: "Heaven or Earth", attributeEarth: "Heaven or Earth",
 };
+const TRAIT_ES = {
+  genderMale: "Masculino", genderFemale: "Femenino", genderUnknown: "Género desconocido",
+  alignmentLawful: "Legal", alignmentNeutral: "Neutral", alignmentChaotic: "Caótico",
+  alignmentGood: "Bueno", alignmentBalanced: "Equilibrado", alignmentEvil: "Malvado",
+  alignmentMadness: "Locura", alignmentSummer: "Verano", alignmentBeast: "Bestia",
+  servant: "Servant", human: "Humano", humanoid: "Humanoide", livingHuman: "Humano vivo",
+  divine: "Divino", divineSpirit: "Espíritu divino", undead: "No muerto", demonic: "Demoníaco",
+  demonicBeastServant: "Bestia demoníaca", wildbeast: "Bestia salvaje", fae: "Hada", oni: "Oni",
+  giant: "Gigante", superGiant: "Supergigante", mechanical: "Mecánico", hominidaeServant: "Homínido",
+  childServant: "Servant infantil", havingAnimalsCharacteristics: "Con rasgos animales",
+  threatToHumanity: "Amenaza para la humanidad",
+  dragon: "Dragón", dragonSlayer: "Matadragones", saberface: "Saberface", weakToEnumaElish: "Débil a Enuma Elish",
+  riding: "Montura", levitating: "Levitante", canFlyInSpace: "Vuela en el espacio",
+  existenceOutsideTheDomain: "Existencia fuera del dominio", holdingHolyGrail: "Porta el Santo Grial",
+  roman: "Romano", king: "Rey", arthur: "Arturo", knightsOfTheRound: "Caballeros de la Mesa Redonda",
+  greekMythologyMales: "Hombres de la mitología griega", associatedToTheArgo: "Relacionado con el Argo",
+  brynhildsBeloved: "Amado de Brynhild", genji: "Genji", nobunaga: "Nobunaga",
+  shinsengumiServant: "Shinsengumi", valkyrie: "Valquiria", fairyTaleServant: "Servant de cuento",
+  FSNServant: "Servant de Fate/stay night", fsnServant: "Servant de Fate/stay night", illya: "Illya",
+  sakuraSeries: "Serie Sakura", ryozanpaku: "Ryozanpaku", bunnyServant: "Servant conejita",
+  summerModeServant: "Modo verano", groupServant: "Servant grupal",
+  feminineLookingServant: "De apariencia femenina", blessedByKur: "Bendecido por Kur",
+  attributeSky: "Cielo", attributeEarth: "Tierra", attributeHuman: "Humano", attributeStar: "Estrella", attributeBeast: "Bestia",
+};
 function traitLabel(name) {
+  if (settings.ui === "es" && TRAIT_ES[name]) return TRAIT_ES[name];
   if (TRAIT_NAMES[name]) return TRAIT_NAMES[name];
   const words = name
     .replace(/^(alignment|gender)/, "")
