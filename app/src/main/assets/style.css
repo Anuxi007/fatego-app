@@ -504,3 +504,56 @@ body.viewer-open { overflow: hidden; }
 .stat-seg { display: grid; gap: 6px; margin-bottom: 10px; }
 .stat-seg .asel { padding: 7px 4px; }
 .srow .mbar i { transition: width .25s; }
+
+/* ---------- Cards: fanned deck + hits list ---------- */
+.cards-c { display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 10px; }
+.fan { position: relative; height: 92px; flex: 0 0 auto; margin-left: 4px; }
+.fan-card { position: absolute; top: 8px; width: 58px; transform-origin: 50% 90%; }
+.fan-card .cardface { width: 100%; flex: none; }
+.cl { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cl-head {
+  display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-bottom: 2px;
+}
+.cl-row { display: flex; align-items: center; gap: 7px; font-size: 13.5px; }
+.cl-row b { margin-left: auto; font-weight: 800; min-width: 20px; text-align: right; }
+.cl-ic { width: 24px; height: 18px; object-fit: contain; }
+.cl-np { border-top: 1px solid var(--line); padding-top: 5px; margin-top: 2px; }
+.np-tag {
+  font-style: normal; font-size: 9.5px; font-weight: 900; color: #1a1406; vertical-align: 1px;
+  background: linear-gradient(#ffe9a3, #e8b84a); border-radius: 5px; padding: 1px 4px;
+}
+
+/* ---------- NP icon + overcharge ---------- */
+.np-ico {
+  flex: 0 0 auto; width: 48px; height: 48px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line);
+  position: relative; display: flex; align-items: center; justify-content: center;
+}
+.np-ico img { width: 40px; }
+.np-ico i {
+  position: absolute; right: -6px; bottom: -6px; font-style: normal; font-size: 10px; font-weight: 900; color: #1a1406;
+  background: linear-gradient(#ffe9a3, #e8b84a); border-radius: 6px; padding: 1px 5px; box-shadow: 0 0 8px rgba(232,196,106,.6);
+}
+.oc-box {
+  margin-top: 10px; border: 1px solid rgba(244,114,182,.35); border-radius: 14px; padding: 10px 12px 12px;
+  background: linear-gradient(180deg, rgba(244,114,182,.08), rgba(244,114,182,.02));
+}
+.oc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oc-badge { font-size: 10.5px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; color: #1a0612; background: linear-gradient(#ffb3d9, #f472b6); border-radius: 6px; padding: 2px 7px; }
+.oc-hint { font-size: 11.5px; color: var(--muted); }
+.oc-box .lv-label b.oc-num { color: #f9a8d4; }
+
+.oc-v b { color: #f9a8d4; }
+
+/* ---------- Traits: tappable ---------- */
+button.trait { font: inherit; font-size: 12.5px; cursor: pointer; }
+button.trait:active { border-color: var(--gold); color: var(--gold); }
+.trait-link { color: var(--gold); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.trait-filter {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; padding: 4px 4px 4px 14px; border-radius: 99px;
+  background: var(--gold-soft); border: 1px solid var(--gold); color: var(--gold); font-size: 14px;
+}
+.trait-filter span { color: var(--muted); }
+.trait-filter button { margin-left: auto; width: 32px; height: 32px; color: var(--gold); }
+.lv-slider.oc-slider { background: linear-gradient(to right, #f472b6 var(--fill), var(--line) var(--fill)); }
+.lv-slider.oc-slider::-webkit-slider-thumb { background: #f472b6; box-shadow: 0 0 0 1px #f472b6; }

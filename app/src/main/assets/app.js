@@ -29,7 +29,7 @@ const settings = Object.assign(
   store.get("settings", {})
 );
 if (!UI_LANGS.includes(settings.ui)) settings.ui = "en"; // German/Russian were removed
-try { localStorage.removeItem("drops"); localStorage.removeItem("daily"); } catch (e) { /* old caches without translated names */ }
+try { ["drops", "daily", "list_en", "list_ja"].forEach((k) => localStorage.removeItem(k)); } catch (e) { /* old caches without translated names */ }
 if (!settings.data) settings.data = settings.ui === "ja" ? "ja" : "en";
 function saveSettings() {
   store.set("settings", settings);
@@ -63,6 +63,8 @@ const state = {
   index: null,
   details: {},          // cache: lang:id -> servant
   ascTab: {},           // selected artwork per servant
+  oc: {},               // NP overcharge level per NP block
+  trait: null,          // list filter: trait id
   lv: {},               // slider level per skill section
   ver: {},              // selected version (normal/upgraded) per skill
   dailyDay: 1,
@@ -91,7 +93,7 @@ function cleanText(s) {
   // Atlas text contains color markup such as [g][o]▲[/o][/g] and [#…:…] ruby.
   return String(s || "")
     .replace(/\[#([^:\]]+):[^\]]*\]/g, "$1")
-    .replace(/\[\/?[a-zA-Z0-9]+\]/g, "")
+    .replace(/\[(?:\/?[a-z]{1,2}|[0-9a-fA-F]{6}|-)\]/g, "")  // color tags only; keep [Lawful], [Demerit]…
     .trim();
 }
 function fmt(n) {
@@ -148,31 +150,43 @@ function slim(arr) {
       id: s.id, no: s.collectionNo, name: s.name, orig: s.originalName || "",
       cls: s.className, cid: s.classId, r: s.rarity, atk: s.atkMax, hp: s.hpMax,
       face: s.face, attr: s.attribute,
+      tr: (s.traits || []).map((x) => x.id),
     }));
+}
+// id -> trait name, for every trait that at least one servant has
+function traitNamesOf(arr) {
+  const out = {};
+  for (const s of arr) for (const x of s.traits || []) if (x && x.id != null) out[x.id] = x.name;
+  return out;
+}
+function setList(items, traits, lang) {
+  state.list = items;
+  state.listLang = lang;
+  state.traitNames = traits || state.traitNames || {};
 }
 
 async function loadList(force) {
   const lang = settings.data;
-  const key = "list_" + lang;
+  const key = "list2_" + lang;
   const cached = store.get(key, null);
   if (!force && cached && cached.items) {
-    state.list = cached.items;
-    state.listLang = lang;
+    setList(cached.items, cached.traits, lang);
     if (Date.now() - cached.ts > LIST_TTL) refreshListInBackground(lang);
     return;
   }
-  const items = slim(await getJSON(listUrl(lang)));
-  store.set(key, { ts: Date.now(), items });
-  state.list = items;
-  state.listLang = lang;
+  const raw = await getJSON(listUrl(lang));
+  const items = slim(raw), traits = traitNamesOf(raw);
+  store.set(key, { ts: Date.now(), items, traits });
+  setList(items, traits, lang);
 }
 
 async function refreshListInBackground(lang) {
   try {
-    const items = slim(await getJSON(listUrl(lang)));
-    store.set("list_" + lang, { ts: Date.now(), items });
+    const raw = await getJSON(listUrl(lang));
+    const items = slim(raw), traits = traitNamesOf(raw);
+    store.set("list2_" + lang, { ts: Date.now(), items, traits });
     if (state.listLang === lang) {
-      state.list = items;
+      setList(items, traits, lang);
       if (currentRoute().name === "list") renderListResults();
     }
   } catch (e) { /* keep cached data */ }
@@ -447,9 +461,16 @@ async function renderList() {
       </div>
       <p class="note ${state.index ? "hidden" : ""}" id="indexNote">${esc(t("indexError"))}</p>
     </div>
+    ${state.trait != null ? `
+    <div class="trait-filter" id="traitFilter">
+      <span>${esc(t("traitFilter"))}:</span><b>${esc(traitDisplay(state.trait))}</b>
+      <button class="icon-btn" aria-label="✕">✕</button>
+    </div>` : ""}
     <div class="list" id="list"></div>
   `;
 
+  const tf = $("#traitFilter");
+  if (tf) tf.querySelector("button").addEventListener("click", () => { state.trait = null; tf.remove(); renderListResults(); });
   $("#q").addEventListener("input", (e) => { state.query = e.target.value; renderListResults(); });
   $("#classChips").addEventListener("click", (e) => {
     const b = e.target.closest("[data-cls]"); if (!b) return;
@@ -510,6 +531,7 @@ function filteredList() {
     if (state.cls !== "all" && classGroup(s.cls) !== state.cls) return false;
     if (state.rarity !== "all" && String(s.r) !== String(state.rarity)) return false;
     if (q && !norm(s.name).includes(q) && !norm(s.orig).includes(q) && String(s.no) !== q) return false;
+    if (state.trait != null && !(s.tr || []).includes(Number(state.trait))) return false;
     if (state.index) {
       if (state.region === "na" && !state.index.na.has(s.id)) return false;
       if (state.region === "jp" && state.index.na.has(s.id)) return false;
@@ -754,8 +776,8 @@ function statsCard(svt) {
   </div>`;
 }
 function cardImg(type) {
-  if (type === "extra") return `<span class="cmini ex"><img src="cards/card_txt_extra.png" alt=""></span>`;
-  return `<span class="cmini"><img src="cards/card_icon_${type}.png" alt=""></span>`;
+  if (type === "extra") return `<img class="cl-ic ex" src="cards/card_txt_extra.png" alt="">`;
+  return `<img class="cl-ic" src="cards/card_icon_${type}.png" alt="">`;
 }
 function cardsSection(svt) {
   if (!svt.cards || !svt.cards.length) return "";
@@ -768,22 +790,27 @@ function cardsSection(svt) {
   };
   const np = currentNp(svt);
   const npType = np ? CARD_TYPES[String(np.card)] : null;
-  const cells = ["quick", "arts", "buster", "extra"].filter((k) => hits(k) != null).map((k) => `
-    <div class="hit">${cardImg(k)}<b>${hits(k)}</b><small>${esc(t("card_" + k))}</small></div>`);
-  if (np && npType) {
-    cells.push(`<div class="hit np">
-      <span class="cmini"><img src="cards/card_icon_${npType}.png" alt=""><i>NP</i></span>
-      <b>${(np.npDistribution || []).length || "–"}</b><small>NP · ${esc(t("card_" + npType))}</small></div>`);
-  }
+  const npHits = np && np.npDistribution && np.npDistribution.length &&
+    (np.functions || []).some((f) => /^damageNp/.test(f.funcType || "")) ? np.npDistribution.length : null;
+  const n = svt.cards.length;
+  const fan = svt.cards.map((c, i) => {
+    const rot = (i - (n - 1) / 2) * 6;
+    return `<div class="fan-card" style="left:${i * 21}px;transform:rotate(${rot}deg);z-index:${i}">${cardFace(c)}</div>`;
+  }).join("");
+  const rows = ["quick", "arts", "buster", "extra"].filter((k) => hits(k) != null).map((k) =>
+    `<div class="cl-row">${cardImg(k)}<span>${esc(t("card_" + k))}</span><b>${hits(k)}</b></div>`).join("");
   return `
     <div class="section">
       <h2>${esc(t("cards"))}</h2>
-      <div class="deck">${svt.cards.map((c) => cardFace(c)).join("")}</div>
-    </div>
-    ${cells.length ? `<div class="section">
-      <h2>${esc(t("hits"))}</h2>
-      <div class="card hits" style="grid-template-columns:repeat(${cells.length},1fr)">${cells.join("")}</div>
-    </div>` : ""}`;
+      <div class="card cards-c">
+        <div class="fan" style="width:${(n - 1) * 21 + 58}px">${fan}</div>
+        <div class="cl">
+          <div class="cl-head"><span>${esc(t("cardCol"))}</span><span>${esc(t("hitsCol"))}</span></div>
+          ${rows}
+          ${npType ? `<div class="cl-row cl-np"><img class="cl-ic" src="cards/card_icon_${npType}.png" alt=""><span><i class="np-tag">NP</i> ${esc(t("card_" + npType))}</span><b>${npHits != null ? npHits : "–"}</b></div>` : ""}
+        </div>
+      </div>
+    </div>`;
 }
 
 // ---------- Full-screen image viewer ----------
@@ -944,15 +971,30 @@ function traitsSection(svt) {
     const label = traitLabel(n);
     if (seen.has(label)) continue;
     seen.add(label);
-    out.push(label);
+    out.push({ id: tr.id, label });
   }
   if (!out.length) return "";
   return `
     <div class="section">
       <h2>${esc(t("traits"))}</h2>
-      <div class="card traits">${out.map((l) => `<span class="trait">${esc(l)}</span>`).join("")}</div>
+      <div class="card traits">${out.map((x) => `<button class="trait" data-trait="${x.id}">${esc(x.label)}</button>`).join("")}</div>
     </div>`;
 }
+function traitDisplay(id) {
+  const name = (state.traitNames && state.traitNames[id]) || (state.traitSeen && state.traitSeen[id]);
+  return name ? traitLabel(name) : `#${id}`;
+}
+// Tap any trait (list in the servant page, or [Trait] in a description) -> servant list filtered by it
+document.addEventListener("click", (ev) => {
+  const el = ev.target.closest("[data-trait]");
+  if (!el) return;
+  ev.preventDefault();
+  state.trait = Number(el.dataset.trait);
+  state.query = "";
+  lastListScroll = 0;
+  closeSheet();
+  if (currentRoute().name === "list") renderList(); else location.hash = "#/";
+});
 
 function firstOf(obj) {
   if (!obj) return null;
@@ -1048,27 +1090,106 @@ function fmtValue(fn, sv) {
   return num(v, 0);
 }
 
-function effectRows(skill, lv) {
+function svAt(fn, lv, oc) {
+  const arr = oc > 1 ? fn["svals" + oc] : fn.svals;
+  if (!arr || !arr.length) return null;
+  return arr[Math.min(lv, arr.length) - 1] || {};
+}
+// keys of the function's values that change with overcharge at this NP level
+function ocKeys(fn, lv) {
+  const keys = new Set();
+  const base = svAt(fn, lv, 1) || {};
+  for (let oc = 2; oc <= 5; oc++) {
+    const o = svAt(fn, lv, oc);
+    if (!o) continue;
+    for (const k of new Set([...Object.keys(base), ...Object.keys(o)])) {
+      if (JSON.stringify(base[k]) !== JSON.stringify(o[k])) keys.add(k);
+    }
+  }
+  return keys;
+}
+function fnLabel(fn) {
+  const buff = fn.buffs && fn.buffs[0];
+  return /^damageNp/.test(fn.funcType || "") && !(buff && buff.name)
+    ? t("npDamage")
+    : tr((buff && buff.name) || fn.funcPopupText || fn.funcType);
+}
+function fxParts(fn, sv) {
+  const parts = [];
+  const val = fmtValue(fn, sv);
+  if (val) parts.push(`<b>${esc(val)}</b>`);
+  if (sv.Turn > 0) parts.push(`${sv.Turn}T`);
+  if (sv.Count > 0) parts.push(`${sv.Count}×`);
+  if (sv.Rate > 0 && sv.Rate < 1000) parts.push(`${num(sv.Rate / 10)}% ${esc(t("chance"))}`);
+  return parts;
+}
+function isSpecialDamage(fn) {
+  return /^damageNp(Individual|Rare|StateIndividual|AndCheckIndividuality)/.test(fn.funcType || "");
+}
+function specialLabel(fn, sv) {
+  const id = sv && (sv.Target || (Array.isArray(sv.TargetList) && sv.TargetList[0]));
+  if (!id) return esc(t("specialDamage"));
+  const name = traitDisplay(id);
+  return `${esc(t("specialDamage"))} <span class="trait-link" data-trait="${id}">[${esc(name)}]</span>`;
+}
+function effectRows(skill, lv, isNP) {
   const rows = [];
+  const seen = new Set();
   for (const fn of skill.functions || []) {
     if (!fn || fn.funcType === "none" || !fn.svals || !fn.svals.length) continue;
-    const sv = fn.svals[Math.min(lv, fn.svals.length) - 1] || {};
+    const keys = isNP ? ocKeys(fn, lv) : new Set();
+    // values that grow with overcharge go to the overcharge box instead
+    if (keys.has("Value") || (keys.size && !isSpecialDamage(fn) && !/^damageNp/.test(fn.funcType || ""))) continue;
+    const sv = svAt(fn, lv, 1) || {};
     const first = fn.svals[0] || {};
     const last = fn.svals[fn.svals.length - 1] || {};
-    const buff = fn.buffs && fn.buffs[0];
-    const label = /^damageNp/.test(fn.funcType || "") && !(buff && buff.name)
-      ? t("npDamage")
-      : tr((buff && buff.name) || fn.funcPopupText || fn.funcType);
-    const parts = [];
-    const val = fmtValue(fn, sv);
-    if (val) parts.push(`<b>${esc(val)}</b>`);
-    if (sv.Turn > 0) parts.push(`${sv.Turn}T`);
-    if (sv.Count > 0) parts.push(`${sv.Count}×`);
-    if (sv.Rate > 0 && sv.Rate < 1000) parts.push(`${num(sv.Rate / 10)}% ${esc(t("chance"))}`);
+    const parts = fxParts(fn, sv);
     const varies = first.Value !== last.Value || first.Rate !== last.Rate || first.Turn !== last.Turn || first.Count !== last.Count;
-    rows.push(`<div class="fx ${varies ? "vary" : ""}"><span class="fx-l">${esc(cleanText(label))}</span><span class="fx-v">${parts.join(" · ") || "–"}</span></div>`);
+    const html = `<div class="fx ${varies ? "vary" : ""}"><span class="fx-l">${esc(cleanText(fnLabel(fn)))}</span><span class="fx-v">${parts.join(" · ") || "–"}</span></div>`;
+    if (seen.has(html)) continue;   // the API repeats some effects (e.g. one per target group)
+    seen.add(html);
+    rows.push(html);
   }
   return rows.join("");
+}
+function ocRows(skill, lv, oc) {
+  const rows = [];
+  const seen = new Set();
+  for (const fn of skill.functions || []) {
+    if (!fn || !fn.svals || !fn.svals.length) continue;
+    const keys = ocKeys(fn, lv);
+    if (!keys.size) continue;
+    const sv = svAt(fn, lv, oc) || {};
+    let label, value;
+    if (keys.has("Correction") && !keys.has("Value")) {
+      label = specialLabel(fn, sv);
+      value = `<b>${esc(num(sv.Correction / 10))}%</b>`;
+    } else {
+      label = esc(cleanText(fnLabel(fn)));
+      value = fxParts(fn, sv).join(" · ") || "–";
+    }
+    const html = `<div class="fx"><span class="fx-l">${label}</span><span class="fx-v oc-v">${value}</span></div>`;
+    if (seen.has(html)) continue;
+    seen.add(html);
+    rows.push(html);
+  }
+  return rows.join("");
+}
+function hasOc(skill) {
+  return (skill.functions || []).some((fn) => fn && fn.svals && fn.svals.length && ocKeys(fn, 1).size);
+}
+function ocBox(skill, i, lv) {
+  if (!hasOc(skill)) return "";
+  const oc = (state.oc && state.oc[i]) || 1;
+  return `
+    <div class="oc-box">
+      <div class="oc-head"><span class="oc-badge">${esc(t("overcharge"))}</span><span class="oc-hint">${esc(t("ocHint"))}</span></div>
+      <div class="lv-row">
+        <span class="lv-label">${esc(t("charge"))} <b class="oc-num" data-part="ocv">${oc * 100}%</b></span>
+        <input type="range" class="lv-slider oc-slider" data-i="${i}" min="1" max="5" step="1" value="${oc}" style="--fill:${((oc - 1) / 4) * 100}%">
+      </div>
+      <div class="fx-list" data-part="oc">${ocRows(skill, lv, oc)}</div>
+    </div>`;
 }
 
 // Split a skill/NP description into one effect per line ("A & B + C" -> "A.\nB.\nC.").
@@ -1113,7 +1234,7 @@ function fillDetail(obj, lv) {
   const text = splitEffects(cleanText(tr(obj.detail)));
   const fns = obj.functions || [];
   const parts = text.split(/(\{\{[^}]*\}\})/);
-  return parts.map((p) => {
+  const html = parts.map((p) => {
     const m = /^\{\{(\d+):([A-Za-z]+)(?::([A-Za-z]*))?\}\}$/.exec(p);
     if (!m) return esc(p);
     const fn = fns[Number(m[1]) - 1];
@@ -1129,6 +1250,59 @@ function fillDetail(obj, lv) {
     else out = num(raw);
     return `<b class="tv">${esc(out)}</b>`;
   }).join("");
+  return linkTraits(html, obj);
+}
+
+// Servant traits a skill/NP refers to, taken from its function data (not guessed from the text)
+function traitRefs(obj) {
+  const ids = new Map();
+  const add = (x) => {
+    if (x == null) return;
+    const id = typeof x === "object" ? x.id : Number(x);
+    if (!id) return;
+    if (typeof x === "object" && x.name) { state.traitSeen = state.traitSeen || {}; state.traitSeen[id] = x.name; }
+    if (!state.traitNames || !Object.keys(state.traitNames).length || state.traitNames[id]) ids.set(id, true);
+  };
+  for (const fn of obj.functions || []) {
+    if (!fn) continue;
+    (fn.functvals || []).forEach(add);
+    const sv = (fn.svals && fn.svals[0]) || {};
+    add(sv.Target);
+    (Array.isArray(sv.TargetList) ? sv.TargetList : []).forEach(add);
+    for (const bf of fn.buffs || []) {
+      (bf.ckOpIndv || []).forEach(add);
+      (bf.ckSelfIndv || []).forEach(add);
+    }
+  }
+  return [...ids.keys()];
+}
+const NOT_TRAIT = /^(demerit|penalizaci[oó]n|デメリット|treated as|cuenta como|.*buff.*|.*debuff.*)$/i;
+function linkTraits(html, obj) {
+  const refs = traitRefs(obj);
+  if (!refs.length) return html;
+  const label = (id) => {
+    const n = (state.traitNames && state.traitNames[id]) || (state.traitSeen && state.traitSeen[id]) || "";
+    return { a: traitLabel(n).toLowerCase(), b: n.toLowerCase() };
+  };
+  const used = new Set();
+  const tokens = [];
+  html.replace(/\[([^\[\]<>]{1,40})\]/g, (m, inner) => { tokens.push(inner); return m; });
+  // 1) exact name matches
+  const assign = {};
+  tokens.forEach((tk, k) => {
+    const low = tk.trim().toLowerCase();
+    const hit = refs.find((id) => !used.has(id) && (label(id).a === low || label(id).b.replace(/^alignment|^attribute/, "") === low.replace(/\s+/g, "")));
+    if (hit) { used.add(hit); assign[k] = hit; }
+  });
+  // 2) one remaining trait + one remaining bracket (e.g. translated "[Legal]") -> pair them
+  const leftIds = refs.filter((id) => !used.has(id));
+  const leftTk = tokens.map((tk, k) => k).filter((k) => assign[k] == null && !NOT_TRAIT.test(tokens[k].trim()));
+  if (leftIds.length === 1 && leftTk.length === 1) assign[leftTk[0]] = leftIds[0];
+  let k = -1;
+  return html.replace(/\[([^\[\]<>]{1,40})\]/g, (m) => {
+    k++;
+    return assign[k] ? `<span class="trait-link" data-trait="${assign[k]}">${m}</span>` : m;
+  });
 }
 
 const MAX_LV = { skills: 10, append: 10, np: 5 };
@@ -1171,10 +1345,10 @@ function skillBlock(key, i, entry, mats) {
   const cd = isNP ? "" : cdBadge(skill, lv);
   const type = CARD_TYPES[String(skill.card)] || "buster";
   const icon = isNP
-    ? `<div class="np-card c-${type}">${type.toUpperCase()}</div>`
+    ? `<span class="np-ico"><img src="cards/card_icon_${type}.png" alt=""><i>NP</i></span>`
     : `<img class="skill-icon" src="${esc(skill.icon)}" alt="" loading="lazy" onerror="imgErr(this)">`;
   const badges = isNP
-    ? `${skill.rank ? `<span class="badge">${esc(skill.rank)}</span>` : ""}${skill.type ? `<span class="badge">${esc(skill.type)}</span>` : ""}`
+    ? `${skill.rank ? `<span class="badge">${esc(skill.rank)}</span>` : ""}${skill.type ? `<span class="badge">${esc(skill.type)}</span>` : ""}${(skill.npDistribution || []).length && (skill.functions || []).some((f) => /^damageNp/.test(f.funcType || "")) ? `<span class="badge">${esc(t("hitsN", { n: skill.npDistribution.length }))}</span>` : ""}`
     : `<span class="badge cd ${cd ? "" : "hidden"}" data-part="cd">${cd}</span>`;
   const toggle = entry.versions.length > 1 ? `
     <div class="ver-toggle">${entry.versions.map((_, k) =>
@@ -1195,7 +1369,8 @@ function skillBlock(key, i, entry, mats) {
           <span class="lv-label">${esc(lvLabel)} <b data-part="lv">${lv}</b></span>
           <input type="range" class="lv-slider" data-key="${key}" data-i="${i}" min="1" max="${max}" step="1" value="${lv}" style="--fill:${((lv - 1) / (max - 1)) * 100}%">
         </div>
-        <div class="fx-list" data-part="fx">${effectRows(skill, lv)}</div>
+        <div class="fx-list" data-part="fx">${effectRows(skill, lv, isNP)}</div>
+        ${isNP ? `<div data-part="ocbox">${ocBox(skill, i, lv)}</div>` : ""}
         <div class="lv-mats" data-part="mats">${levelMats(mats, lv)}</div>
       </div>
     </div>`;
@@ -1220,6 +1395,17 @@ function bindLevelSection(key, list, mats) {
     const slider = e.target.closest(".lv-slider");
     if (!slider) return;
     const i = Number(slider.dataset.i);
+    if (slider.classList.contains("oc-slider")) {
+      const oc = Number(slider.value);
+      state.oc[i] = oc;
+      const entry = list[i];
+      const skill = entry.versions[versionIndex(key, i, entry)];
+      const block = slider.closest(".skill");
+      block.querySelector('[data-part="ocv"]').textContent = oc * 100 + "%";
+      block.querySelector('[data-part="oc"]').innerHTML = ocRows(skill, skillLevel(key, i), oc);
+      slider.style.setProperty("--fill", ((oc - 1) / 4) * 100 + "%");
+      return;
+    }
     const lv = Number(slider.value);
     const entry = list[i];
     const skill = entry.versions[versionIndex(key, i, entry)];
@@ -1227,7 +1413,9 @@ function bindLevelSection(key, list, mats) {
     state.lv[key][i] = lv;
     const block = slider.closest(".skill");
     block.querySelector('[data-part="lv"]').textContent = lv;
-    block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, lv);
+    block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, lv, key === "np");
+    const ocEl = block.querySelector('[data-part="oc"]');
+    if (ocEl) ocEl.innerHTML = ocRows(skill, lv, (state.oc && state.oc[i]) || 1);
     block.querySelector('[data-part="detail"]').innerHTML = fillDetail(skill, lv);
     block.querySelector('[data-part="mats"]').innerHTML = levelMats(mats, lv);
     const cdEl = block.querySelector('[data-part="cd"]');
