@@ -7,6 +7,7 @@ on:
       - 'data/**'
       - 'scripts/**'
       - '.github/workflows/index.yml'
+      - '.github/workflows/banners.yml'
       - 'README.md'
   workflow_dispatch:
 
