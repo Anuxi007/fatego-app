@@ -266,6 +266,9 @@ function currentRoute() {
   if (h === "settings") return { name: "settings" };
   if (h === "daily") return { name: "daily" };
   if (h === "plan") return { name: "plan" };
+  if (h === "banners") return { name: "banners" };
+  if (h === "ce") return { name: "ceList" };
+  if (h.startsWith("ce/")) return { name: "ceDetail", id: h.slice(3) };
   if (h.startsWith("plan/")) return { name: "planEdit", slot: Number(h.slice(5)) };
   return { name: "list" };
 }
@@ -283,6 +286,7 @@ function route() {
   view.onclick = null;
   view.oninput = null;
   document.documentElement.lang = settings.ui;
+  if (!$("#sheet").classList.contains("hidden")) closeSheet();
   document.body.classList.toggle("on-detail", r.name === "detail");
   updateBarSolid();
   if (r.name === "detail") renderDetail(r.id);
@@ -290,6 +294,9 @@ function route() {
   else if (r.name === "daily") renderDaily();
   else if (r.name === "plan") renderPlan();
   else if (r.name === "planEdit") renderPlanEdit(r.slot);
+  else if (r.name === "banners") renderBanners();
+  else if (r.name === "ceList") renderCeList();
+  else if (r.name === "ceDetail") renderCeDetail(r.id);
   else renderList();
 }
 
@@ -310,6 +317,8 @@ $("#backBtn").addEventListener("click", () => {
 // ---------- Side menu ----------
 const MENU = [
   { route: "list", hash: "#/", key: "menuServants", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>' },
+  { route: "banners", hash: "#/banners", key: "banners", icon: '<path d="M5 4h14v16l-7-4-7 4z"/><path d="M9 9h6"/>' },
+  { route: "ceList", hash: "#/ce", key: "ceMenu", icon: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 15.5l3.5-6 3.5 6zM9 18h6"/>' },
   { route: "plan", hash: "#/plan", key: "plan", icon: '<path d="M4 20h16M7 16V9M12 16V5M17 16v-4"/>' },
   { route: "daily", hash: "#/daily", key: "daily", icon: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>' },
   { route: "settings", hash: "#/settings", key: "settings", icon: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>' },
@@ -317,7 +326,7 @@ const MENU = [
 function openDrawer() {
   const cur = currentRoute().name;
   $("#drawerItems").innerHTML = MENU.map((m) => `
-    <a class="drawer-item ${cur === m.route || (m.route === "plan" && cur === "planEdit") ? "active" : ""}" href="${m.hash}">
+    <a class="drawer-item ${cur === m.route || (m.route === "plan" && cur === "planEdit") || (m.route === "ceList" && cur === "ceDetail") ? "active" : ""}" href="${m.hash}">
       <svg viewBox="0 0 24 24" class="ic">${m.icon}</svg><span>${esc(t(m.key))}</span>
     </a>`).join("");
   document.body.classList.add("drawer-open");
@@ -1255,8 +1264,8 @@ function splitEffects(text) {
 }
 
 // NA text uses placeholders like {{1:Value:m}} -> function #1, sval "Value", format m (÷10 %) / y (÷100 %)
-function fillDetail(obj, lv) {
-  const text = splitEffects(cleanText(tr(obj.detail)));
+function fillDetail(obj, lv, raw) {
+  const text = splitEffects(cleanText(raw ? obj.detail : tr(obj.detail)));
   const fns = obj.functions || [];
   const parts = text.split(/(\{\{[^}]*\}\})/);
   const html = parts.map((p) => {
@@ -2225,6 +2234,285 @@ document.addEventListener("click", (ev) => {
   if (!el || !el.dataset.item) return;
   openItemSheet(el.dataset.item, el.dataset.iname || "", el.dataset.icon || "");
 });
+
+
+// ---------- Banners (current summons, NA / JP) ----------
+const BANNERS_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/banners.json";
+let BANNERS = null;
+async function loadBanners() {
+  const cached = store.get("banners", null);
+  if (cached && cached.data && Date.now() - cached.ts < 60 * 60 * 1000) return (BANNERS = cached.data);
+  try {
+    const data = await getJSON(BANNERS_URL + "?t=" + Math.floor(Date.now() / 600000));
+    store.set("banners", { ts: Date.now(), data });
+    BANNERS = data;
+  } catch (e) {
+    if (cached && cached.data) BANNERS = cached.data; else throw e;
+  }
+  return BANNERS;
+}
+const SERVER_TZ = { NA: "America/Los_Angeles", JP: "Asia/Tokyo" };
+function tzLabel(region) {
+  if (region === "JP") return "JST (UTC+9)";
+  try {
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: SERVER_TZ.NA, timeZoneName: "short" }).formatToParts(new Date());
+    const n = (p.find((x) => x.type === "timeZoneName") || {}).value || "PT";
+    return n === "PDT" ? "PDT (UTC−7)" : n === "PST" ? "PST (UTC−8)" : n;
+  } catch (e) { return "PT"; }
+}
+function serverDate(ts, region, withDay) {
+  const loc = settings.ui === "ja" ? "ja-JP" : settings.ui === "es" ? "es-PE" : "en-US";
+  const o = { timeZone: SERVER_TZ[region], day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false };
+  if (withDay) o.weekday = "short";
+  try { return new Intl.DateTimeFormat(loc, o).format(new Date(ts * 1000)); } catch (e) { return new Date(ts * 1000).toLocaleString(); }
+}
+function countdown(end) {
+  let s = Math.max(0, Math.floor(end - Date.now() / 1000));
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60); s -= m * 60;
+  const p2 = (n) => String(n).padStart(2, "0");
+  return (d ? `${d}${t("daysShort")} ` : "") + `${p2(h)}:${p2(m)}:${p2(s)}`;
+}
+function bannerName(b) {
+  const raw = String((settings.data === "ja" ? b.jname : b.name) || b.name || "").replace(/\s*\n\s*/g, " ");
+  // JP banners have no English name in the API: name them after their featured units instead
+  if (settings.data !== "ja" && /[\u3040-\u30ff\u4e00-\u9fff]/.test(raw) && b.f.length && BANNERS) {
+    const names = b.f.map((i) => (BANNERS.units[String(i)] || {}).n).filter(Boolean);
+    if (names.length) return `${b.type === "friendPoint" ? t("bnFp") : t("bnQuartz")}: ${names.slice(0, 3).join(" · ")}${names.length > 3 ? " …" : ""}`;
+  }
+  return raw;
+}
+function bannerOrig(b) {
+  const raw = String(b.jname || b.name || "").replace(/\s*\n\s*/g, " ");
+  return raw !== bannerName(b) ? raw : "";
+}
+function unitFace(id, size) {
+  const u = BANNERS && BANNERS.units[String(id)];
+  if (!u) return "";
+  const ce = u.k === "c";
+  return `<span class="bf ${ce ? "ce" : ""}" style="--s:${size || 34}px" ${ce ? `data-ce="${id}"` : `data-svt="${id}"`}>
+    <img src="${esc(u.f)}" alt="" loading="lazy" onerror="imgErr(this)"><em>${ce ? "CE" : u.r + "★"}</em></span>`;
+}
+let bannerTimer = null;
+function tickBanners() {
+  const els = document.querySelectorAll("[data-end]");
+  if (!els.length) { clearInterval(bannerTimer); bannerTimer = null; return; }
+  const now = Date.now() / 1000;
+  els.forEach((el) => {
+    const end = Number(el.dataset.end), start = Number(el.dataset.start || 0);
+    if (el.classList.contains("cd-txt")) el.textContent = "⏱ " + countdown(end);
+    else if (el.classList.contains("cd-big")) el.textContent = countdown(end);
+    else if (el.classList.contains("bbar")) el.firstElementChild.style.width = Math.min(100, ((now - start) / (end - start)) * 100) + "%";
+  });
+}
+async function renderBanners() {
+  setHeader(esc(t("bannersTitle")), false);
+  renderLoading();
+  try { await loadBanners(); } catch (e) { return renderError(renderBanners); }
+  if (currentRoute().name !== "banners") return;
+  if (!state.bannerRegion) state.bannerRegion = store.get("bannerRegion", settings.data === "ja" ? "JP" : "NA");
+  if (!state.bannerKind) state.bannerKind = "all";
+  const draw = () => {
+    const region = state.bannerRegion;
+    const now = Date.now() / 1000;
+    const all = ((BANNERS.regions[region] || {}).banners || []).filter((b) => b.start <= now && b.end > now);
+    const list = all.filter((b) => state.bannerKind === "all" || (state.bannerKind === "fp") === (b.type === "friendPoint"))
+      .sort((a, b) => a.end - b.end || a.start - b.start);
+    view.innerHTML = `
+      <div class="asel-seg" id="bRegion">${["NA", "JP"].map((r) => `<button class="asel ${r === region ? "on" : ""}" data-r="${r}">${r}</button>`).join("")}</div>
+      <div class="chips" id="bKind">
+        ${[["all", t("all") + " · " + all.length], ["stone", t("bnQuartz")], ["fp", t("bnFp")]].map(([k, l]) =>
+          `<button class="chip ${state.bannerKind === k ? "active" : ""}" data-k="${k}">${esc(l)}</button>`).join("")}
+      </div>
+      <div class="b-tz"><span>${esc(t("serverTime"))}: <b>${esc(tzLabel(region))}</b></span><span class="live"><i></i>${esc(t("activeN", { n: all.length }))}</span></div>
+      ${list.length ? `<div class="card b-list">${list.map((b) => {
+        const left = b.end - now;
+        return `<div class="b-row ${left < 86400 ? "urg" : ""}" data-b="${b.id}">
+          <div class="b-l1"><span class="b-tag">${esc(b.type === "friendPoint" ? t("bnFp") : t("bnQuartz"))}</span><b class="b-nm">${esc(bannerName(b))}</b><span class="b-cd cd-txt" data-end="${b.end}">⏱ ${countdown(b.end)}</span></div>
+          ${b.f.length ? `<div class="b-faces">${b.f.slice(0, 8).map((id) => unitFace(id, 34)).join("")}${b.f.length > 8 ? `<span class="b-more">+${b.f.length - 8}</span>` : ""}</div>` : ""}
+          <div class="b-l3"><span>${esc(serverDate(b.start, region))}</span><span class="ar">→</span><span>${esc(serverDate(b.end, region))}</span></div>
+          <div class="bbar" data-end="${b.end}" data-start="${b.start}"><i style="width:${Math.min(100, ((now - b.start) / (b.end - b.start)) * 100)}%"></i></div>
+        </div>`;
+      }).join("")}</div>` : `<div class="state">${esc(t("noBanners"))}</div>`}
+      <p class="footer-note">${esc(t("bannersNote"))}</p>`;
+    if (!bannerTimer) bannerTimer = setInterval(tickBanners, 1000);
+  };
+  draw();
+  view.onclick = (e) => {
+    const r = e.target.closest("[data-r]");
+    if (r) { state.bannerRegion = r.dataset.r; store.set("bannerRegion", r.dataset.r); return draw(); }
+    const k = e.target.closest("[data-k]");
+    if (k) { state.bannerKind = k.dataset.k; return draw(); }
+    const sv = e.target.closest("[data-svt]");
+    if (sv) { location.hash = "#/s/" + sv.dataset.svt; return; }
+    const row = e.target.closest("[data-b]");
+    if (row) openBannerSheet(state.bannerRegion, Number(row.dataset.b));
+  };
+}
+function openBannerSheet(region, id) {
+  const b = ((BANNERS.regions[region] || {}).banners || []).find((x) => x.id === id);
+  if (!b) return;
+  const svts = b.f.filter((i) => (BANNERS.units[String(i)] || {}).k !== "c");
+  const ces = b.f.filter((i) => (BANNERS.units[String(i)] || {}).k === "c");
+  const row = (i) => {
+    const u = BANNERS.units[String(i)]; if (!u) return "";
+    const name = settings.data === "ja" ? u.j || u.n : u.n;
+    return `<div class="bd-it" ${u.k === "c" ? `data-ce="${i}"` : `data-svt="${i}"`}>${unitFace(i, 44)}
+      <div><b>${esc(name)}</b><small><span class="stars">${stars(u.r)}</span>${u.c ? " · " + esc(className(u.c)) : ""}</small></div><span class="go">›</span></div>`;
+  };
+  openSheet(`
+    <div class="bd-head"><div><span class="b-tag">${esc(b.type === "friendPoint" ? t("bnFp") : t("bnQuartz"))}</span>
+      <div class="sheet-title" style="padding:6px 0 0">${esc(bannerName(b))}</div>
+      ${bannerOrig(b) ? `<div class="d-sub">${esc(bannerOrig(b))}</div>` : ""}</div>
+      <button class="icon-btn" data-close="1" aria-label="Close">✕</button></div>
+    <div class="bd-times">
+      <div><small>${esc(t("bnStart"))}</small><b>${esc(serverDate(b.start, region, true))}</b></div>
+      <div><small>${esc(t("bnEnd"))}</small><b>${esc(serverDate(b.end, region, true))}</b></div>
+    </div>
+    <div class="bd-cd"><small>${esc(t("endsIn"))}</small><b class="cd-big" data-end="${b.end}">${countdown(b.end)}</b></div>
+    <div class="b-tz" style="margin:8px 2px 0"><span>${esc(t("serverTime"))}: <b>${esc(tzLabel(region))}</b></span></div>
+    ${svts.length ? `<h3 class="bd-h">${esc(t("featuredSvts"))} <span>${svts.length}</span></h3><div class="bd-list">${svts.map(row).join("")}</div>` : ""}
+    ${ces.length ? `<h3 class="bd-h">${esc(t("featuredCes"))} <span>${ces.length}</span></h3><div class="bd-list">${ces.map(row).join("")}</div>` : ""}
+  `, (ev) => {
+    const sv = ev.target.closest("[data-svt]");
+    if (sv) { closeSheet(); location.hash = "#/s/" + sv.dataset.svt; return; }
+    const ce = ev.target.closest("[data-ce]");
+    if (ce) { closeSheet(); location.hash = "#/ce/" + ce.dataset.ce; }
+  });
+  if (!bannerTimer) bannerTimer = setInterval(tickBanners, 1000);
+}
+
+// ---------- Craft Essences ----------
+function ceListUrl(lang) {
+  return lang === "ja" ? `${API}/export/JP/basic_equip.json` : `${API}/export/JP/basic_equip_lang_en.json`;
+}
+async function loadCeList() {
+  const lang = settings.data;
+  if (state.ceList && state.ceLang === lang) return state.ceList;
+  const key = "celist_" + lang;
+  const cached = store.get(key, null);
+  if (cached && cached.items && Date.now() - cached.ts < LIST_TTL) {
+    state.ceList = cached.items; state.ceLang = lang; return state.ceList;
+  }
+  const raw = await getJSON(ceListUrl(lang));
+  const items = raw.filter((x) => x.collectionNo > 0).map((x) => ({
+    id: x.id, no: x.collectionNo, name: x.name, r: x.rarity, face: x.face,
+    cat: x.bondEquipOwner ? "bond" : x.valentineEquipOwner ? "valentine" : (x.flags || []).includes("svtEquipExp") ? "exp" : "normal",
+  }));
+  store.set(key, { ts: Date.now(), items });
+  state.ceList = items; state.ceLang = lang;
+  return items;
+}
+async function renderCeList() {
+  setHeader(esc(t("ceMenu")), false);
+  if (!state.ceList || state.ceLang !== settings.data) {
+    renderLoading();
+    try { await loadCeList(); } catch (e) { return renderError(renderCeList); }
+    if (currentRoute().name !== "ceList") return;
+  }
+  const f = state.ceF || (state.ceF = { q: "", r: "all", cat: "all", desc: true });
+  view.innerHTML = `
+    <input id="ceQ" class="search" type="search" placeholder="${esc(t("search"))}" value="${esc(f.q)}" autocomplete="off">
+    <div class="chips" id="ceR">
+      <button class="chip ${f.r === "all" ? "active" : ""}" data-r="all">${esc(t("allRarities"))}</button>
+      ${[5, 4, 3, 2, 1].map((r) => `<button class="chip ${String(f.r) === String(r) ? "active" : ""}" data-r="${r}">${r}★</button>`).join("")}
+    </div>
+    <div class="row-ctrl">
+      <div class="chips" id="ceC" style="margin:0;flex:1">
+        ${[["all", "all"], ["normal", "ceNormal"], ["bond", "ceBondCat"], ["valentine", "ceValentine"]].map(([v, k]) =>
+          `<button class="chip ${f.cat === v ? "active" : ""}" data-c="${v}">${esc(t(k))}</button>`).join("")}
+      </div>
+      <button class="sort invert ${f.desc ? "on" : ""}" id="ceInv" aria-label="${esc(t("invert"))}">⇅</button>
+    </div>
+    <div class="count" id="ceCount" style="margin:6px 2px"></div>
+    <div class="list" id="ceListEl"></div>`;
+  const draw = () => {
+    const q = norm(f.q.trim());
+    let arr = state.ceList.filter((c) =>
+      (f.r === "all" || String(c.r) === String(f.r)) &&
+      (f.cat === "all" ? c.cat !== "exp" : c.cat === f.cat) &&
+      (!q || norm(c.name).includes(q) || String(c.no) === q));
+    arr.sort((a, b) => (f.desc ? b.no - a.no : a.no - b.no));
+    $("#ceCount").textContent = t("results", { n: arr.length });
+    $("#ceListEl").innerHTML = arr.slice(0, 300).map((c) => `
+      <a class="svt" href="#/ce/${c.id}">
+        <img class="face ce-face" src="${esc(c.face)}" alt="" loading="lazy" onerror="imgErr(this)">
+        <div class="svt-main"><div class="svt-name">${esc(c.name)}</div>
+          <div class="svt-meta"><span class="stars">${stars(c.r)}</span>${c.cat !== "normal" ? `<span class="ce-cat">${esc(t(c.cat === "bond" ? "ceBondCat" : c.cat === "valentine" ? "ceValentine" : "ceExp"))}</span>` : ""}</div></div>
+        <span class="no">#${c.no}</span>
+      </a>`).join("") || `<div class="state">${esc(t("noResults"))}</div>`;
+  };
+  draw();
+  $("#ceQ").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
+  $("#ceR").addEventListener("click", (e) => { const b = e.target.closest("[data-r]"); if (!b) return; f.r = b.dataset.r; $("#ceR").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === b)); draw(); });
+  $("#ceC").addEventListener("click", (e) => { const b = e.target.closest("[data-c]"); if (!b) return; f.cat = b.dataset.c; $("#ceC").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === b)); draw(); });
+  $("#ceInv").addEventListener("click", (e) => { f.desc = !f.desc; e.currentTarget.classList.toggle("on", f.desc); draw(); });
+}
+async function loadCe(id) {
+  const key = "ce:" + settings.data + ":" + id;
+  if (state.details[key]) return state.details[key];
+  let ce;
+  if (settings.data === "ja") ce = await getJSON(`${API}/nice/JP/equip/${id}?lore=true`);
+  else {
+    try { ce = await getJSON(`${API}/nice/NA/equip/${id}?lore=true`); }
+    catch (e) { if (e.status !== 404) throw e; ce = await getJSON(`${API}/nice/JP/equip/${id}?lang=en&lore=true`); ce._partial = true; }
+  }
+  state.details[key] = ce;
+  return ce;
+}
+async function renderCeDetail(id) {
+  setHeader("", true);
+  renderLoading();
+  window.scrollTo(0, 0);
+  let ce;
+  try { ce = await loadCe(id); } catch (e) { return renderError(() => renderCeDetail(id)); }
+  const r = currentRoute();
+  if (r.name !== "ceDetail" || r.id !== String(id)) return;
+  $("#title").textContent = ce.name;
+  const g = (ce.extraAssets && ce.extraAssets.charaGraph && ce.extraAssets.charaGraph.equip) || {};
+  const img = Object.values(g)[0];
+  const skills = (ce.skills || []).slice().sort((a, b) => (a.condLimitCount || 0) - (b.condLimitCount || 0) || (a.priority || 0) - (b.priority || 0));
+  const prof = ce.profile || {};
+  const lore = (prof.comments || []).map((c) => c.comment).filter(Boolean)[0];
+  const owner = ce.bondEquipOwner || ce.valentineEquipOwner;
+  const ownerSvt = owner && state.list && state.list.find((s) => s.id === owner);
+  view.innerHTML = `
+    ${ce._partial && t("notInNA") ? `<div class="notice">${esc(t("notInNA"))}</div>` : ""}
+    <div class="ce-top">
+      ${img ? `<img class="ce-art" id="ceArt" src="${esc(img)}" alt="" onerror="imgErr(this)">` : ""}
+      <div class="ce-info">
+        <div class="dhero-no">Nº ${ce.collectionNo}</div>
+        <h2 class="ce-name">${esc(ce.name)}</h2>
+        <div class="stars" style="font-size:16px">${stars(ce.rarity)}</div>
+        <div class="p-foot" style="padding-top:10px">
+          <span>${esc(t("cost"))} <b>${fmt(ce.cost)}</b></span>
+          <span>${esc(t("maxLvShort"))} <b>${fmt(ce.lvMax)}</b></span>
+        </div>
+        ${owner ? `<a class="ce-owner" href="#/s/${owner}">${esc(t(ce.bondEquipOwner ? "ceBondOf" : "ceValentineOf"))}: <b>${esc(ownerSvt ? ownerSvt.name : "#" + owner)}</b> ›</a>` : ""}
+        ${prof.illustrator ? `<div class="ce-ill">${esc(t("illustrator"))}: <b>${esc(prof.illustrator)}</b></div>` : ""}
+      </div>
+    </div>
+    <div class="section"><h2>${esc(t("stats"))}</h2>
+      <div class="card scard ce-st">
+        <div class="srow"><span>ATK</span>${bar((ce.atkMax || 0) / 2500, "linear-gradient(90deg,#ff8a5b,#ffb36b)")}<em>${fmt(ce.atkBase)} → ${fmt(ce.atkMax)}</em></div>
+        <div class="srow"><span>HP</span>${bar((ce.hpMax || 0) / 2500, "linear-gradient(90deg,#4fd1a5,#7be3c0)")}<em>${fmt(ce.hpBase)} → ${fmt(ce.hpMax)}</em></div>
+      </div>
+    </div>
+    ${skills.length ? `<div class="section"><h2>${esc(t("ceEffect"))}</h2><div class="card">${skills.map((sk) => `
+      <div class="skill">
+        <img class="skill-icon" src="${esc(sk.icon)}" alt="" loading="lazy" onerror="imgErr(this)">
+        <div class="skill-main">
+          <div class="skill-name">${esc((sk.condLimitCount || 0) >= 4 ? t("ceMLB") : t("ceBase"))}</div>
+          <div class="skill-detail">${fillDetail(sk, 1, true)}</div>
+          <div class="fx-list">${effectRows(sk, 1)}</div>
+        </div>
+      </div>`).join("")}</div></div>` : ""}
+    ${lore ? `<div class="section"><h2>${esc(t("ceLore"))}</h2><div class="card ce-lore">${esc(lore)}</div></div>` : ""}
+    <a class="link-btn" href="https://apps.atlasacademy.io/db/${ce._partial || settings.data === "ja" ? "JP" : "NA"}/craft-essence/${ce.collectionNo}">${esc(t("openAtlas"))} ↗</a>`;
+  const art = $("#ceArt");
+  if (art && img) art.addEventListener("click", () => showViewer(ce.name, [{ kind: "asc", label: "CE", short: "CE", url: img }], 0));
+}
 
 // ---------- View: settings ----------
 function renderSettings() {
