@@ -95,7 +95,32 @@ def main():
     newest = sorted(playable, key=lambda x: -x["collectionNo"])[:10]
     na_by_no = sorted([x for x in na if x.get("collectionNo", 0) > 0], key=lambda x: -x["collectionNo"])[:10]
 
+    # JP release date of the servants not yet in NA (first JP summon that featured them; welfare servants
+    # take the date of the closest earlier servant) -> the app estimates when they reach NA
+    rel = {}
+    try:
+        first = {}
+        for g in get(f"{API}/JP/nice_gacha.json"):
+            for i in g.get("featuredSvtIds") or []:
+                t = g.get("openedAt", 0)
+                if t and (i not in first or t < first[i]):
+                    first[i] = t
+        known = sorted((x["collectionNo"], first[x["id"]]) for x in playable if x["id"] in first)
+        for x in playable:
+            if x["id"] in na_ids_set:
+                continue
+            t = first.get(x["id"])
+            if not t:
+                prev = [d for no, d in known if no <= x["collectionNo"]]
+                t = prev[-1] if prev else 0
+            if t:
+                rel[str(x["id"])] = t
+        print(f"JP release dates for {len(rel)} JP-only servants")
+    except Exception as e:  # noqa: BLE001
+        print("gacha dates failed:", e)
+
     out = {
+        "rel": rel,
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "na": na_ids,
         "np": np,

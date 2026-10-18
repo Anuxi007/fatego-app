@@ -221,7 +221,7 @@ async function loadTranslations() {
 const INDEX_URL = "https://raw.githubusercontent.com/Anuxi007/fatego-app/main/data/index.json";
 
 function applyIndex(raw) {
-  state.index = { na: new Set(raw.na || []), np: raw.np || {} };
+  state.index = { na: new Set(raw.na || []), np: raw.np || {}, rel: raw.rel || {} };
 }
 
 async function loadIndex() {
@@ -624,6 +624,7 @@ async function renderDetail(id, mine) {
     <div class="dhero">
       ${art.length ? `<img id="heroImg" class="dhero-img" src="${esc(art[tab].url)}" alt="" onerror="imgErr(this)">` : ""}
       <div class="dhero-shade"></div>
+      ${svt._partial || (state.index && !state.index.na.has(svt.id)) ? jpOnlyBadge(svt) : ""}
       <div class="dhero-bottom">
         <div class="dhero-title">
           <div class="dhero-no">Nº ${svt.collectionNo}${mine ? ` <span class="mine-tag">${esc(t("myChaldea"))} · ${esc(state.mine.acct)}</span>` : ""}</div>
@@ -639,7 +640,6 @@ async function renderDetail(id, mine) {
         ${art.length > 1 ? artSelector(art, tab) : ""}
       </div>
     </div>
-    ${svt._partial && t("notInNA") ? `<div class="notice">${esc(t("notInNA"))}</div>` : ""}
 
     <div class="section" id="go-profile">
       <h2>${esc(t("profile"))}</h2>
@@ -805,15 +805,22 @@ function mountSideTab(title, items, onPick, current) {
   if (items.some((x) => x.sub)) el.classList.add("wide");
   document.body.appendChild(el);
   const tab = el.querySelector(".goto-tab");
+  const panel = el.querySelector(".goto-panel");
+  // the panel is centred on the tab (and kept on screen) so they always look attached
+  const placePanel = (y) => {
+    const h = panel.offsetHeight || 300;
+    panel.style.top = Math.max(64, Math.min(window.innerHeight - h - 10, y - h / 2)) + "px";
+  };
   const place = () => {
     const f = store.get("gotoY", 0.75);
     const y = Math.max(70, Math.min(window.innerHeight - 90, f * window.innerHeight));
     tab.style.top = y + "px";
-    el.querySelector(".goto-panel").style.setProperty("--y", y + "px");
+    placePanel(y);
   };
   place();
   const open = (on) => {
     const now = on == null ? !document.body.classList.contains("goto-open") : on;
+    if (now) placePanel(parseFloat(tab.style.top));
     if (now && current) {
       const cur = current();
       el.querySelectorAll(".goto-it").forEach((b) => b.classList.toggle("cur", b.dataset.go === cur));
@@ -841,7 +848,7 @@ function mountSideTab(title, items, onPick, current) {
       if (ev.cancelable) ev.preventDefault();
       const y = Math.max(70, Math.min(window.innerHeight - 90, g.top + dy));
       tab.style.top = y + "px";
-      el.querySelector(".goto-panel").style.setProperty("--y", y + "px");
+      placePanel(y);
     } else if (g.mode === "swipe" && ev.cancelable) ev.preventDefault();
   }, { passive: false });
   tab.addEventListener("touchend", (ev) => {
@@ -921,6 +928,19 @@ function alignment(svt) {
   const have = new Set((svt.traits || []).map((x) => x && x.name).filter(Boolean));
   const words = ALIGN_ORDER.filter((k) => have.has("alignment" + k)).map((k) => (t("align")[k]) || k);
   return words.length ? words.join(" · ") : "–";
+}
+// "JP only" badge on the artwork, with an estimate of the NA release (JP release + ~2 years)
+function jpOnlyBadge(svt) {
+  const rel = state.index && state.index.rel && state.index.rel[String(svt.id)];
+  let eta = "";
+  if (rel) {
+    const at = rel + NA_LAG;
+    const loc = settings.ui === "ja" ? "ja-JP" : settings.ui === "es" ? "es-PE" : "en-US";
+    eta = at > Date.now() / 1000
+      ? t("etaNA", { d: new Intl.DateTimeFormat(loc, { month: "numeric", year: "numeric" }).format(new Date(at * 1000)) })
+      : t("etaNA", { d: t("etaSoon") });
+  }
+  return `<div class="jp-badge"><b>${esc(t("jpOnlyTag"))}</b>${eta ? `<small>${esc(eta)}</small>` : ""}</div>`;
 }
 function regionLabel(svt) {
   if (state.index) return state.index.na.has(svt.id) ? "NA · JP" : "JP";
