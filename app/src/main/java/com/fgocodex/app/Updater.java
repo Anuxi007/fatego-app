@@ -89,6 +89,86 @@ public class Updater {
         }
     }
 
+    /**
+     * Saves a text file (collection backup) into Downloads/FGO Codex.
+     * Returns "ok", "perm" (storage permission requested on Android 8-9; try again) or "error".
+     */
+    @JavascriptInterface
+    public String saveText(String fileName, String content) {
+        try {
+            String safe = safeName(fileName, "backup.json");
+            byte[] data = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, safe);
+                v.put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/json");
+                v.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/FGO Codex");
+                Uri uri = activity.getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) return "error";
+                try (OutputStream os = activity.getContentResolver().openOutputStream(uri)) {
+                    if (os == null) return "error";
+                    os.write(data);
+                }
+            } else {
+                if (activity.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    activity.runOnUiThread(() -> activity.requestPermissions(
+                            new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 43));
+                    return "perm";
+                }
+                File dir = new File(android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS), "FGO Codex");
+                if (!dir.exists() && !dir.mkdirs()) return "error";
+                try (OutputStream os = new FileOutputStream(new File(dir, safe))) {
+                    os.write(data);
+                }
+            }
+            return "ok";
+        } catch (Exception e) {
+            return "error";
+        }
+    }
+
+    /** Opens the Android share sheet with a text file (collection backup). */
+    @JavascriptInterface
+    public String shareText(String fileName, String content) {
+        try {
+            File dir = new File(activity.getCacheDir(), "share");
+            if (!dir.exists() && !dir.mkdirs()) return "error";
+            File f = new File(dir, safeName(fileName, "backup.json"));
+            try (OutputStream os = new FileOutputStream(f)) {
+                os.write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            Uri uri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", f);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("application/json");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent chooser = Intent.createChooser(send, f.getName());
+            activity.runOnUiThread(() -> activity.startActivity(chooser));
+            return "ok";
+        } catch (Exception e) {
+            return "error";
+        }
+    }
+
+    /** Followed servants as JSON: {"id": {"name":…, "na":true, "jp":false}, …} */
+    @JavascriptInterface
+    public String getWatchList() {
+        return activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE)
+                .getString("watch", "{}");
+    }
+
+    @JavascriptInterface
+    public void clearWebCache() {
+        activity.runOnUiThread(() -> webView.clearCache(true));
+    }
+
+    private static String safeName(String name, String fallback) {
+        String safe = name == null ? fallback : name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        return safe.isEmpty() ? fallback : safe;
+    }
+
     @JavascriptInterface
     public void setLanguage(String lang) {
         activity.getSharedPreferences(CheckWorker.PREFS, android.content.Context.MODE_PRIVATE)

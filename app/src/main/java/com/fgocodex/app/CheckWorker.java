@@ -50,10 +50,11 @@ public class CheckWorker extends Worker {
 
     static void schedule(Context ctx) {
         Constraints c = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-        PeriodicWorkRequest req = new PeriodicWorkRequest.Builder(CheckWorker.class, 6, TimeUnit.HOURS)
+        PeriodicWorkRequest req = new PeriodicWorkRequest.Builder(CheckWorker.class, 1, TimeUnit.HOURS)
                 .setConstraints(c).build();
+        // UPDATE (not KEEP) so phones that scheduled the old 6 h check switch to hourly
         WorkManager.getInstance(ctx).enqueueUniquePeriodicWork("fgocodex-check",
-                ExistingPeriodicWorkPolicy.KEEP, req);
+                ExistingPeriodicWorkPolicy.UPDATE, req);
     }
 
     @NonNull

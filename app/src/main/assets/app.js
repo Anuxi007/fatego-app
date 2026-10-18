@@ -67,11 +67,9 @@ const state = {
   trait: null,          // list filter: trait id
   lv: {},               // slider level per skill section
   ver: {},              // selected version (normal/upgraded) per skill
-  dailyDay: 1,
   dailyTier: {},
 };
 Object.assign(state, store.get("filters", {}));
-state.dailyDay = store.get("dailyDay", 1);
 
 function saveFilters() {
   store.set("filters", {
@@ -263,6 +261,8 @@ async function loadServant(id) {
 function currentRoute() {
   const h = location.hash.replace(/^#\/?/, "");
   if (h.startsWith("s/")) return { name: "detail", id: h.slice(2) };
+  if (h.startsWith("c/")) return { name: "detail", id: h.slice(2), mine: true };
+  if (h === "chaldea") return { name: "chaldea" };
   if (h === "settings") return { name: "settings" };
   if (h === "daily") return { name: "daily" };
   if (h === "plan") return { name: "plan" };
@@ -287,10 +287,13 @@ function route() {
   view.oninput = null;
   document.documentElement.lang = settings.ui;
   if (!$("#sheet").classList.contains("hidden")) closeSheet();
-  if (r.name !== "detail") { state.curSvt = null; setBarActions(null); unmountGoTo(); }
+  if (r.name !== "detail") { state.curSvt = null; state.mine = null; }
+  setBarActions(null);
+  unmountGoTo();
   document.body.classList.toggle("on-detail", r.name === "detail");
   updateBarSolid();
-  if (r.name === "detail") renderDetail(r.id);
+  if (r.name === "detail") renderDetail(r.id, !!r.mine);
+  else if (r.name === "chaldea") renderChaldea();
   else if (r.name === "settings") renderSettings();
   else if (r.name === "daily") renderDaily();
   else if (r.name === "plan") renderPlan();
@@ -318,6 +321,7 @@ $("#backBtn").addEventListener("click", () => {
 // ---------- Side menu ----------
 const MENU = [
   { route: "list", hash: "#/", key: "menuServants", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>' },
+  { route: "chaldea", hash: "#/chaldea", key: "myChaldea", icon: '<path d="M4 21V9l4-3 4 3 4-3 4 3v12z"/><path d="M10 21v-5h4v5M4 13h16"/>' },
   { route: "banners", hash: "#/banners", key: "banners", icon: '<path d="M5 4h14v16l-7-4-7 4z"/><path d="M9 9h6"/>' },
   { route: "ceList", hash: "#/ce", key: "ceMenu", icon: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 15.5l3.5-6 3.5 6zM9 18h6"/>' },
   { route: "plan", hash: "#/plan", key: "plan", icon: '<path d="M4 20h16M7 16V9M12 16V5M17 16v-4"/>' },
@@ -588,8 +592,17 @@ function renderListResults() {
 }
 
 // ---------- View: detail ----------
-async function renderDetail(id) {
+async function renderDetail(id, mine) {
   setHeader("", true);
+  // "Mi Chaldea" mode: the sliders show (and edit) your own levels, kept apart from the general servant page
+  state.mine = null;
+  if (mine) {
+    const acct = curAcct();
+    const entry = loadCol(acct)[id];
+    if (!entry) { location.replace("#/s/" + id); return; }
+    normColEntry(entry);
+    state.mine = { id: Number(id), acct, e: entry, locked: true };
+  }
   const brief = state.list && state.list.find((s) => String(s.id) === String(id));
   if (brief) $("#title").textContent = brief.name;
   renderLoading();
@@ -599,7 +612,7 @@ async function renderDetail(id) {
     [svt] = await Promise.all([loadServant(id), loadTranslations()]);
   } catch (e) { return renderError(() => renderDetail(id)); }
   const r = currentRoute();
-  if (r.name !== "detail" || r.id !== String(id)) return;
+  if (r.name !== "detail" || r.id !== String(id) || !!r.mine !== !!mine) return;
   $("#title").textContent = svt.name;
 
   const art = artworks(svt);
@@ -613,15 +626,15 @@ async function renderDetail(id) {
       <div class="dhero-shade"></div>
       <div class="dhero-bottom">
         <div class="dhero-title">
-          <div>
-            <div class="dhero-no">Nº ${svt.collectionNo}</div>
-            <h2 class="dhero-name">${esc(svt.name)}</h2>
+          <div class="dhero-no">Nº ${svt.collectionNo}${mine ? ` <span class="mine-tag">${esc(t("myChaldea"))} · ${esc(state.mine.acct)}</span>` : ""}</div>
+          <h2 class="dhero-name">${esc(svt.name)}</h2>
+          <div class="dhero-row">
             <div class="dhero-tags">
               <span class="htag"><img src="${classIcon(svt.classId, svt.rarity)}" alt="" onerror="imgErr(this)">${esc(className(svt.className))}</span>
               <span class="htag stars-tag">${stars(svt.rarity)}</span>
             </div>
+            <div class="hero-acts" id="heroActs">${mine ? "" : svtActionsHtml(svt)}${art.length ? `<button class="dhero-zoom" id="zoomBtn" aria-label="Zoom"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>` : ""}</div>
           </div>
-          <div class="hero-acts" id="heroActs">${svtActionsHtml(svt)}${art.length ? `<button class="dhero-zoom" id="zoomBtn" aria-label="Zoom"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>` : ""}</div>
         </div>
         ${art.length > 1 ? artSelector(art, tab) : ""}
       </div>
@@ -761,17 +774,35 @@ function unmountGoTo() {
   document.body.classList.remove("goto-open");
 }
 function mountGoTo() {
+  const items = GOTO.filter(([id]) => id === "top" || (document.getElementById(id) && document.getElementById(id).children.length))
+    .map(([id, key, ic]) => ({ id, label: t(key), icon: ic }));
+  mountSideTab(t("goTo"), items, (id) => {
+    if (id === "top") { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    const n = document.getElementById(id);
+    if (n) window.scrollTo({ top: n.getBoundingClientRect().top + window.scrollY - 64, behavior: "smooth" });
+  }, () => {
+    // highlight the section on screen
+    let cur = "top";
+    for (const it of items) {
+      const n = document.getElementById(it.id);
+      if (n && n.getBoundingClientRect().top < window.innerHeight * 0.4) cur = it.id;
+    }
+    return cur;
+  });
+}
+// Right-edge tab (drag up/down to move it, tap or swipe left to open). Used by the servant page and Mi Chaldea.
+function mountSideTab(title, items, onPick, current) {
   unmountGoTo();
   const el = document.createElement("div");
   el.id = "goto";
-  const items = GOTO.filter(([id]) => id === "top" || (document.getElementById(id) && document.getElementById(id).children.length));
   el.innerHTML = `
     <div class="goto-shade"></div>
-    <div class="goto-panel">
-      <div class="goto-h">${esc(t("goTo"))}</div>
-      ${items.map(([id, key, ic]) => `<button class="goto-it" data-go="${id}"><i>${ic}</i>${esc(t(key))}</button>`).join("")}
+    <div class="goto-panel ${items.some((x) => x.sub) ? "wide" : ""}">
+      <div class="goto-h">${esc(title)}</div>
+      ${items.map((x) => `<button class="goto-it" data-go="${esc(x.id)}"><i>${x.icon}</i>${x.sub ? `<span><b>${esc(x.label)}</b><small>${esc(x.sub)}</small></span>` : esc(x.label)}</button>`).join("")}
     </div>
-    <button class="goto-tab" aria-label="${esc(t("goTo"))}"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`;
+    <button class="goto-tab" aria-label="${esc(title)}"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`;
+  if (items.some((x) => x.sub)) el.classList.add("wide");
   document.body.appendChild(el);
   const tab = el.querySelector(".goto-tab");
   const place = () => {
@@ -783,13 +814,8 @@ function mountGoTo() {
   place();
   const open = (on) => {
     const now = on == null ? !document.body.classList.contains("goto-open") : on;
-    if (now) {
-      // highlight the section on screen
-      let cur = "top";
-      for (const [id] of items) {
-        const n = document.getElementById(id);
-        if (n && n.getBoundingClientRect().top < window.innerHeight * 0.4) cur = id;
-      }
+    if (now && current) {
+      const cur = current();
       el.querySelectorAll(".goto-it").forEach((b) => b.classList.toggle("cur", b.dataset.go === cur));
     }
     document.body.classList.toggle("goto-open", now);
@@ -798,9 +824,7 @@ function mountGoTo() {
   el.querySelector(".goto-panel").addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-go]"); if (!b) return;
     open(false);
-    if (b.dataset.go === "top") { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
-    const n = document.getElementById(b.dataset.go);
-    if (n) window.scrollTo({ top: n.getBoundingClientRect().top + window.scrollY - 64, behavior: "smooth" });
+    onPick(b.dataset.go);
   });
   // tab: tap = toggle, drag up/down = move it, drag left = open
   let g = null;
@@ -921,11 +945,19 @@ function svtActionsHtml(svt) {
   return `<button class="act-btn ${pos >= 0 ? "on" : ""}" data-act="plan" aria-label="${esc(t("plan"))}">${ICON_PLAN}${pos >= 0 ? `<span class="act-dot">#${pos + 1}</span>` : ""}</button>
     ${w ? `<button class="act-btn ${wl ? "on" : ""}" data-act="watch" aria-label="${esc(t("watchHead"))}">${ICON_BELL}${wl ? `<span class="act-dot">${wl}</span>` : ""}</button>` : ""}`;
 }
+const ICON_LOCK = '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+const ICON_UNLOCK = '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>';
 function setBarActions(svt) {
   const bar = $("#barActs");
-  if (bar) bar.innerHTML = svt ? svtActionsHtml(svt) : "";
+  if (bar) {
+    bar.onclick = null;
+    bar.classList.toggle("show", !!(svt && state.mine));
+    bar.innerHTML = !svt ? "" : state.mine
+      ? `<button class="act-btn lock-btn ${state.mine.locked ? "" : "on"}" data-act="lock" aria-label="${esc(t("lockLabel"))}">${state.mine.locked ? ICON_LOCK : ICON_UNLOCK}</button>`
+      : svtActionsHtml(svt);
+  }
   const hero = $("#heroActs");
-  if (hero && svt) {
+  if (hero && svt && !state.mine) {
     const zoom = $("#zoomBtn");
     hero.innerHTML = svtActionsHtml(svt);
     if (zoom) hero.appendChild(zoom);
@@ -936,9 +968,17 @@ document.addEventListener("click", (ev) => {
   if (!b || !b.closest("#heroActs, #barActs")) return;
   const svt = state.curSvt;
   if (!svt || currentRoute().name !== "detail") return;
-  if (b.dataset.act === "watch") openWatchSheet(svt);
+  if (b.dataset.act === "lock") toggleLock(svt);
+  else if (b.dataset.act === "watch") openWatchSheet(svt);
   else addToPlanAndShow(svt);
 });
+function toggleLock(svt) {
+  if (!state.mine) return;
+  state.mine.locked = !state.mine.locked;
+  document.querySelectorAll("#sec-skills, #sec-np, #sec-append").forEach((el) => el.classList.toggle("locked", state.mine.locked));
+  setBarActions(svt);
+  toast(t(state.mine.locked ? "lockOn" : "lockOff"));
+}
 function openWatchSheet(svt) {
   const w = watchState(svt.id) || { na: false, jp: false };
   const face = (state.list && (state.list.find((x) => x.id === svt.id) || {}).face) ||
@@ -965,6 +1005,11 @@ function openWatchSheet(svt) {
   });
 }
 function addToPlanAndShow(svt) {
+  let movedJp = false;
+  if (curAcct() === "NA" && !inNA(svt.id) && !loadPlan().some((e) => e.id === svt.id)) {
+    setAcct("JP");
+    movedJp = true;
+  }
   const plan = loadPlan();
   let pos = plan.findIndex((e) => e.id === svt.id);
   let added = false;
@@ -977,7 +1022,7 @@ function addToPlanAndShow(svt) {
     savePlan(plan);
     pos = plan.length - 1;
     added = true;
-    toast(t("planAdded", { n: pos + 1 }));
+    toast(movedJp ? t("planJpOnly") : t("planAdded", { n: pos + 1 }));
   }
   setBarActions(svt);
   openPlanSheet(added ? svt.id : null);
@@ -1591,7 +1636,26 @@ const MAX_LV = { skills: 10, append: 10, np: 5 };
 const DEFAULT_LV = { skills: 10, append: 10, np: 1 };
 
 function skillLevel(key, i) {
+  if (state.mine) {
+    const e = state.mine.e;
+    if (key === "skills") return e.s[i] != null ? e.s[i] : 1;
+    if (key === "append") return e.a[i] != null ? e.a[i] : 0;
+    if (key === "np") return e.np || 1;
+  }
   return (state.lv[key] && state.lv[key][i]) || DEFAULT_LV[key] || 10;
+}
+// Mi Chaldea lets appends sit at 0 (not unlocked yet)
+function minLevel(key) {
+  return state.mine && key === "append" ? 0 : 1;
+}
+function setMineLevel(key, i, lv) {
+  const m = state.mine; if (!m) return;
+  if (key === "skills") m.e.s[i] = lv;
+  else if (key === "append") m.e.a[i] = lv;
+  else if (key === "np") m.e.np = lv;
+  const col = loadCol(m.acct);
+  col[m.id] = m.e;
+  saveCol(col, m.acct);
 }
 function versionIndex(key, i, entry) {
   const v = state.ver[key] && state.ver[key][i];
@@ -1623,8 +1687,10 @@ function skillBlock(key, i, entry, mats) {
   const max = MAX_LV[key] || 10;
   const vi = versionIndex(key, i, entry);
   const skill = entry.versions[vi];
+  const min = minLevel(key);
   const lv = Math.min(skillLevel(key, i), max);
-  const cd = isNP ? "" : cdBadge(skill, lv);
+  const dl = Math.max(1, lv); // level used for values (append 0 = not unlocked, shown with level 1 values)
+  const cd = isNP ? "" : cdBadge(skill, dl);
   const type = CARD_TYPES[String(skill.card)] || "buster";
   const icon = isNP
     ? `<span class="np-ico"><img src="cards/card_icon_${type}.png" alt=""><i>NP</i></span>`
@@ -1646,13 +1712,13 @@ function skillBlock(key, i, entry, mats) {
         ${isNP && skill.ruby && skill.ruby !== "-" && skill.ruby !== skill.name ? `<div class="d-sub">${esc(skill.ruby)}</div>` : ""}
         ${toggle}
         ${unlock}
-        <div class="skill-detail" data-part="detail">${fillDetail(skill, lv)}</div>
+        <div class="skill-detail" data-part="detail">${fillDetail(skill, dl)}</div>
         <div class="lv-row">
           <span class="lv-label">${esc(lvLabel)} <b data-part="lv">${lv}</b></span>
-          <input type="range" class="lv-slider" data-key="${key}" data-i="${i}" min="1" max="${max}" step="1" value="${lv}" style="--fill:${((lv - 1) / (max - 1)) * 100}%">
+          <input type="range" class="lv-slider ${state.mine ? "mine-sl" : ""}" data-key="${key}" data-i="${i}" min="${min}" max="${max}" step="1" value="${lv}" style="--fill:${((lv - min) / (max - min)) * 100}%">
         </div>
-        <div class="fx-list" data-part="fx">${effectRows(skill, lv, isNP)}</div>
-        ${isNP ? `<div data-part="ocbox">${ocBox(skill, i, lv)}</div>` : ""}
+        <div class="fx-list" data-part="fx">${effectRows(skill, dl, isNP)}</div>
+        ${isNP ? `<div data-part="ocbox">${ocBox(skill, i, dl)}</div>` : ""}
         <div class="lv-mats" data-part="mats">${levelMats(mats, lv)}</div>
       </div>
     </div>`;
@@ -1663,7 +1729,7 @@ function levelSection(key, title, list, mats) {
   return `
     <div class="section">
       <h2>${esc(title)}</h2>
-      <div class="card" id="sec-${key}">
+      <div class="card ${state.mine && state.mine.locked ? "locked" : ""}" id="sec-${key}">
         ${list.map((entry, i) => skillBlock(key, i, entry, mats)).join("")}
       </div>
     </div>`;
@@ -1684,31 +1750,42 @@ function bindLevelSection(key, list, mats) {
       const skill = entry.versions[versionIndex(key, i, entry)];
       const block = slider.closest(".skill");
       block.querySelector('[data-part="ocv"]').textContent = oc * 100 + "%";
-      block.querySelector('[data-part="oc"]').innerHTML = ocRows(skill, skillLevel(key, i), oc);
+      block.querySelector('[data-part="oc"]').innerHTML = ocRows(skill, Math.max(1, skillLevel(key, i)), oc);
       slider.style.setProperty("--fill", ((oc - 1) / 4) * 100 + "%");
       return;
     }
     const lv = Number(slider.value);
+    const dl = Math.max(1, lv);
+    const min = minLevel(key);
     const entry = list[i];
     const skill = entry.versions[versionIndex(key, i, entry)];
-    if (!state.lv[key]) state.lv[key] = {};
-    state.lv[key][i] = lv;
+    if (state.mine) {
+      if (state.mine.locked) return;
+      setMineLevel(key, i, lv);
+    } else {
+      if (!state.lv[key]) state.lv[key] = {};
+      state.lv[key][i] = lv;
+    }
     const block = slider.closest(".skill");
     block.querySelector('[data-part="lv"]').textContent = lv;
-    block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, lv, key === "np");
+    block.querySelector('[data-part="fx"]').innerHTML = effectRows(skill, dl, key === "np");
     const ocEl = block.querySelector('[data-part="oc"]');
-    if (ocEl) ocEl.innerHTML = ocRows(skill, lv, (state.oc && state.oc[i]) || 1);
-    block.querySelector('[data-part="detail"]').innerHTML = fillDetail(skill, lv);
+    if (ocEl) ocEl.innerHTML = ocRows(skill, dl, (state.oc && state.oc[i]) || 1);
+    block.querySelector('[data-part="detail"]').innerHTML = fillDetail(skill, dl);
     block.querySelector('[data-part="mats"]').innerHTML = levelMats(mats, lv);
     const cdEl = block.querySelector('[data-part="cd"]');
     if (cdEl) {
-      const cd = cdBadge(skill, lv);
+      const cd = cdBadge(skill, dl);
       cdEl.textContent = cd;
       cdEl.classList.toggle("hidden", !cd);
     }
-    slider.style.setProperty("--fill", ((lv - 1) / (max - 1)) * 100 + "%");
+    slider.style.setProperty("--fill", ((lv - min) / (max - min)) * 100 + "%");
   });
   sec.addEventListener("click", (e) => {
+    if (state.mine && state.mine.locked && e.target.closest(".lv-row") && !e.target.closest(".oc-box")) {
+      toast(t("lockedHint"));
+      return;
+    }
     const b = e.target.closest("[data-ver]");
     if (!b) return;
     const block = b.closest(".skill");
@@ -1925,9 +2002,10 @@ function dropName(d) {
   return (settings.data === "ja" && d.jname) || d.name || "";
 }
 
-function dropRows(q) {
+function dropRows(q, ap) {
+  const cost = ap == null ? q.ap : ap;
   return q.drops.map((d) => {
-    const perAp = d.rate > 0 ? q.ap / d.rate : 0;
+    const perAp = d.rate > 0 && cost > 0 ? cost / d.rate : 0;
     return `
       <div class="drop" ${d.type === "item" ? `data-item="${d.id}" data-iname="${esc(dropName(d))}" data-icon="${esc(d.icon || "")}"` : ""}>
         <img src="${esc(d.icon || "")}" alt="" loading="lazy" onerror="imgErr(this)">
@@ -1937,83 +2015,186 @@ function dropRows(q) {
   }).join("");
 }
 
-function dailyCard(kind, key, classes, quests) {
-  if (!quests.length) return "";
-  const sel = Math.min((state.dailyTier[key] ?? quests.length - 1), quests.length - 1);
+// Server day: NA changes day at 00:00 UTC, JP at 00:00 JST
+const DAILY_OFFSET = { NA: 0, JP: 9 * 3600 };
+function serverDay(region, plusDays) {
+  const off = DAILY_OFFSET[region] || 0;
+  const now = Math.floor(Date.now() / 1000);
+  const start = Math.floor((now + off) / 86400) * 86400 - off + (plusDays || 0) * 86400;
+  const wd = new Date((start + off) * 1000).getUTCDay(); // 0 = Sunday
+  return { start, end: start + 86400, day: wd === 0 ? 7 : wd };
+}
+function serverClock(region) {
+  const off = DAILY_OFFSET[region] || 0;
+  const d = new Date(Date.now() + off * 1000);
+  const wd = t("weekdays")[(d.getUTCDay() + 6) % 7];
+  return `${wd.slice(0, settings.ui === "ja" ? 1 : 3)} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} ${region === "JP" ? "JST" : "UTC"}`;
+}
+const CAMP_LABEL = { ap2: "½ AP", ap4: "¼ AP", ap0: "0 AP", apdown: "AP↓", x2: "×2", x3: "×3", all: "ALL" };
+function dayCampaigns(region, day) {
+  const list = (BANNERS && BANNERS.campaigns && BANNERS.campaigns[region]) || [];
+  const tags = new Set();
+  for (const c of list) if (c.start < day.end && c.end > day.start) tags.add(c.tag);
+  return ["all", "x3", "x2", "ap0", "ap4", "ap2", "apdown"].filter((k) => tags.has(k));
+}
+function campTag(k) {
+  const cls = k === "all" ? "all" : /^x/.test(k) ? "x2" : "ap";
+  return `<i class="dtag ${cls}">${CAMP_LABEL[k] || k}</i>`;
+}
+function apAfter(ap, tags) {
+  if (tags.includes("ap0")) return 0;
+  if (tags.includes("ap4")) return Math.ceil(ap / 4);
+  if (tags.includes("ap2")) return Math.ceil(ap / 2);
+  return ap;
+}
+// Groups shown for a day: one per class (Training Grounds) or per class pair (Ember Gathering)
+function dailyGroups(kind, day, allOpen) {
+  const classes = allOpen ? ALL_CLASSES : DAILY_SCHEDULE[kind][day];
+  if (kind === "tg") return classes.map((c) => ({ key: "tg-" + c, classes: [c], quests: questsFor("tg", c) })).filter((g) => g.quests.length);
+  const seen = new Set();
+  const out = [];
+  for (const c of classes) {
+    const qs = questsFor("ember", c);
+    if (!qs.length) continue;
+    const key = qs[0].classes.join("+");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key: "em-" + key, classes: qs[0].classes, quests: qs });
+  }
+  return out;
+}
+function dailyCard(g, tags) {
+  const quests = g.quests;
+  const sel = Math.min((state.dailyTier[g.key] ?? quests.length - 1), quests.length - 1);
   const q = quests[sel];
-  const icons = classes.map((c) => `<img src="${classIcon(CLASS_IDS[c], 5)}" alt="" onerror="imgErr(this)">`).join("");
-  const title = classes.map((c) => className(c)).join(" · ");
+  const icons = g.classes.map((c) => `<img src="${classIcon(CLASS_IDS[c], 5)}" alt="" onerror="imgErr(this)">`).join("");
+  const title = g.classes.map((c) => className(c)).join(" · ");
+  const ap = apAfter(q.ap, tags);
   return `
-    <div class="card daily-card" data-key="${esc(key)}" data-kind="${kind}">
-      <div class="daily-head"><span class="daily-icons">${icons}</span><b>${esc(title)}</b></div>
-      <div class="chips wrap tier-chips">
-        ${quests.map((x, i) => `<button class="chip ${i === sel ? "active" : ""}" data-tier="${i}">${esc(t("tiers")[x.tier] || "?")}</button>`).join("")}
+    <div class="card daily-card" data-key="${esc(g.key)}">
+      <div class="daily-head">
+        <span class="daily-icons">${icons}</span><b>${esc(title)}</b>
+        <div class="tier-dd">
+          <button class="tier-btn" id="tierBtn">${esc(t("tiers")[q.tier] || "?")} ▾</button>
+          <div class="tier-menu hidden" id="tierMenu">${quests.map((x, i) =>
+            `<button class="${i === sel ? "on" : ""}" data-tier="${i}">${i === sel ? "✓ " : ""}${esc(t("tiers")[x.tier] || "?")}</button>`).join("")}</div>
+        </div>
       </div>
-      <div class="daily-meta">${esc(t("apCost"))}: <b>${q.ap}</b> · ${esc(t("runs"))}: <b>${fmt(q.runs)}</b></div>
+      <div class="daily-meta">${esc(t("apCost"))}: ${ap !== q.ap ? `<s>${q.ap}</s> <b class="ap-new">${ap}</b>` : `<b>${q.ap}</b>`} · ${esc(t("runs"))}: <b>${fmt(q.runs)}</b></div>
       <div class="drops-head"><span>${esc(t("drop"))}</span><span>${esc(t("ratePerRun"))}</span></div>
-      <div class="drops">${dropRows(q)}</div>
+      <div class="drops">${dropRows(q, ap)}</div>
     </div>`;
 }
 
 function renderDailyDay() {
-  const day = state.dailyDay;
   const body = $("#dailyBody");
   if (!body) return;
-  const tgClasses = DAILY_SCHEDULE.tg[day];
-  const emberClasses = DAILY_SCHEDULE.ember[day];
-  const tgCards = tgClasses.map((c) => dailyCard("tg", "tg-" + c, [c], questsFor("tg", c))).join("");
-  // Ember quests cover class pairs; show each distinct quest group once
-  const seen = new Set();
-  const emberCards = [];
-  for (const c of emberClasses) {
-    const qs = questsFor("ember", c);
-    if (!qs.length) continue;
-    const group = qs[0].classes.join("+");
-    if (seen.has(group)) continue;
-    seen.add(group);
-    emberCards.push(dailyCard("ember", "em-" + group, qs[0].classes, qs));
-  }
+  const region = state.dailyRegion;
+  const day = serverDay(region, state.dailyOff);
+  const tags = dayCampaigns(region, day);
+  const allOpen = tags.includes("all");
+  const kind = state.dailyKind;
+  const groups = dailyGroups(kind, day.day, allOpen);
+  const pick = state.dailySel[kind];
+  const gi = Math.max(0, groups.findIndex((g) => g.key === pick));
+  const g = groups[gi];
   body.innerHTML = `
-    ${day >= 6 ? `<div class="notice">${esc(t("weekendAll"))}</div>` : ""}
-    <div class="section"><h2>${esc(t("trainingGrounds"))}</h2>${tgCards || `<p class="note">${esc(t("noResults"))}</p>`}</div>
-    <div class="section"><h2>${esc(t("emberGathering"))}</h2>${emberCards.join("") || `<p class="note">${esc(t("noResults"))}</p>`}</div>
+    <div class="seg2" id="dKind">
+      <button class="${kind === "tg" ? "on" : ""}" data-kind="tg">${esc(t("trainingGrounds"))}</button>
+      <button class="${kind === "ember" ? "on" : ""}" data-kind="ember">${esc(t("emberGathering"))}</button>
+    </div>
+    <div class="d-cls" id="dCls">${groups.map((x, i) => `<button class="${i === gi ? "on" : ""} ${x.classes.length > 1 ? "pair" : ""}" data-g="${esc(x.key)}">${x.classes.map((c) => `<img src="${classIcon(CLASS_IDS[c], 5)}" alt="" onerror="imgErr(this)">`).join("")}</button>`).join("")}</div>
+    ${g ? dailyCard(g, tags) : `<p class="note">${esc(t("noResults"))}</p>`}
     <p class="footer-note">${esc(t("dropsNote"))}${DAILY.updated ? ` · ${esc(DAILY.updated)}` : ""}</p>`;
+}
+
+function renderDailyTop() {
+  const region = state.dailyRegion;
+  const days = [0, 1, 2, 3, 4, 5, 6].map((k) => ({ k, d: serverDay(region, k) }));
+  const today = days[0].d;
+  $("#dayChips").innerHTML = days.map(({ k, d }) => {
+    const tags = dayCampaigns(region, d);
+    const name = t("weekdays")[d.day - 1];
+    return `<button class="dchip ${k === state.dailyOff ? "on" : ""}" data-off="${k}">
+      ${tags.length ? `<span class="dtags">${tags.slice(0, 2).map(campTag).join("")}</span>` : ""}
+      ${k === 0 ? `<em>${esc(t("today"))}</em>${esc(name.slice(0, settings.ui === "ja" ? 2 : 3))}` : esc(name)}</button>`;
+  }).join("");
+  $("#dClock").innerHTML = `<span>🕒 ${esc(t("serverShort"))} <b class="srv-clock" data-end="${today.end}" data-rg="${region}">${esc(serverClock(region))}</b></span>
+    <span>${esc(t("todayEnds"))} <b class="cd-big day-cd" data-end="${today.end}">${countdown(today.end)}</b></span>`;
+  if (!bannerTimer) bannerTimer = setInterval(tickBanners, 1000);
 }
 
 async function renderDaily() {
   setHeader(esc(t("daily")), false);
   renderLoading();
   try { await loadDaily(); } catch (e) { return renderError(renderDaily); }
+  try { await loadBanners(); } catch (e) { /* campaign tags are optional */ }
   if (currentRoute().name !== "daily") return;
+  if (!state.dailyRegion) state.dailyRegion = store.get("dailyRegion", curAcct());
+  if (state.dailyOff == null) state.dailyOff = 0;
+  if (!state.dailyKind) state.dailyKind = "tg";
+  if (!state.dailySel) state.dailySel = {};
   view.innerHTML = `
-    <div class="chips day-chips" id="dayChips">
-      ${[1, 2, 3, 4, 5, 6, 7].map((d) => `<button class="chip ${d === state.dailyDay ? "active" : ""}" data-day="${d}">${esc(t("weekdays")[d - 1])}</button>`).join("")}
-    </div>
+    <div class="day-chips2" id="dayChips"></div>
+    <div class="d-clock" id="dClock"></div>
     <div id="dailyBody"></div>`;
-  $("#dayChips").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-day]"); if (!b) return;
-    state.dailyDay = Number(b.dataset.day);
-    store.set("dailyDay", state.dailyDay);
-    document.querySelectorAll("#dayChips .chip").forEach((c) => c.classList.toggle("active", c === b));
-    renderDailyDay();
-  });
-  $("#dailyBody").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-tier]"); if (!b) return;
-    const card = b.closest(".daily-card");
-    state.dailyTier[card.dataset.key] = Number(b.dataset.tier);
-    renderDailyDay();
-  });
-  renderDailyDay();
+  const redraw = () => { renderDailyTop(); renderDailyDay(); };
+  regionSeg(state.dailyRegion, (r) => { state.dailyRegion = r; store.set("dailyRegion", r); redraw(); });
+  view.onclick = (e) => {
+    const d = e.target.closest("[data-off]");
+    if (d) { state.dailyOff = Number(d.dataset.off); return redraw(); }
+    const k = e.target.closest("[data-kind]");
+    if (k) { state.dailyKind = k.dataset.kind; return renderDailyDay(); }
+    const g = e.target.closest("[data-g]");
+    if (g) { state.dailySel[state.dailyKind] = g.dataset.g; return renderDailyDay(); }
+    if (e.target.closest("#tierBtn")) { $("#tierMenu").classList.toggle("hidden"); return; }
+    const tb = e.target.closest("[data-tier]");
+    if (tb) {
+      const card = tb.closest(".daily-card");
+      state.dailyTier[card.dataset.key] = Number(tb.dataset.tier);
+      return renderDailyDay();
+    }
+    const menu = $("#tierMenu");
+    if (menu && !menu.classList.contains("hidden")) menu.classList.add("hidden");
+  };
+  redraw();
 }
 
 
 // ---------- Upgrade plan ----------
 const PLAN_MIN_SLOTS = 3;
-function loadPlan() {
-  const p = store.get("plan", null);
+// ---------- Game accounts (NA / JP): each has its own plan and its own Mi Chaldea ----------
+const ACCTS = ["NA", "JP"];
+const acctState = { cur: ACCTS.includes(store.get("acct", "NA")) ? store.get("acct", "NA") : "NA" };
+(function migrateOldPlan() {
+  const old = store.get("plan", null);
+  if (Array.isArray(old) && store.get("plan_NA", null) == null) store.set("plan_NA", old.filter(Boolean));
+  if (old != null) { try { localStorage.removeItem("plan"); } catch (e) { /* ignore */ } }
+})();
+function curAcct() { return acctState.cur; }
+function setAcct(a) { acctState.cur = a; store.set("acct", a); }
+function inNA(id) { return !state.index || state.index.na.has(Number(id)); }
+function loadPlan(a) {
+  const p = store.get("plan_" + (a || curAcct()), null);
   return Array.isArray(p) ? p.filter(Boolean) : [];
 }
-function savePlan(p) { store.set("plan", p); }
+function savePlan(p, a) { store.set("plan_" + (a || curAcct()), p); }
+// NA | JP switch in the top bar (plan, Mi Chaldea, daily quests)
+function regionSeg(cur, onChange) {
+  const bar = $("#barActs");
+  if (!bar) return;
+  bar.classList.add("show");
+  bar.innerHTML = `<div class="rseg">${ACCTS.map((a) => `<button data-rg="${a}" class="${a === cur ? "on" : ""}">${a}</button>`).join("")}</div>`;
+  bar.onclick = (e) => {
+    const b = e.target.closest("[data-rg]");
+    if (!b || b.classList.contains("on")) return;
+    bar.querySelectorAll("[data-rg]").forEach((x) => x.classList.toggle("on", x === b));
+    onChange(b.dataset.rg);
+  };
+}
+function acctSeg(rerender) {
+  regionSeg(curAcct(), (a) => { setAcct(a); rerender(); });
+}
 function pad2(n) { return String(n).padStart(2, "0"); }
 function planSummary(e) {
   return {
@@ -2096,8 +2277,9 @@ function planRowHtml(e, i, isNew) {
       <span class="pl-grip" aria-hidden="true">⋮⋮</span>
       <img class="face" src="${esc(e.face)}" alt="" onerror="imgErr(this)">
       <div class="pl-info">
-        <div class="svt-name">${esc(e.name)}${isNew ? `<span class="pl-new">${esc(t("planNew"))}</span>` : ""}</div>
-        <div class="pl-sum">${esc(t("skillsShort"))} <b>${sum.skills}</b> · ${esc(t("appendShort"))} <b>${sum.append}</b></div>
+        <div class="svt-name">${esc(e.name)}${isNew ? `<span class="pl-new">${esc(t("planNew"))}</span>` : ""}${curAcct() === "NA" && !inNA(e.id) ? `<span class="pl-jp">${esc(t("jpOnlyTag"))}</span>` : ""}</div>
+        <div class="pl-sum"><span>${esc(t("skillsShort"))}</span><b>${sum.skills}</b></div>
+        <div class="pl-sum"><span>${esc(t("appendShort"))}</span><b>${sum.append}</b></div>
       </div>
       <button class="pl-btn" data-pl="swap" aria-label="${esc(t("planChange"))}">${ICON_SWAP}</button>
       <button class="pl-btn del" data-pl="del" aria-label="${esc(t("planRemove"))}">${ICON_DEL}</button>
@@ -2191,14 +2373,42 @@ async function renderPlan() {
   setHeader(esc(t("plan")), false);
   const draw = () => {
     const plan = loadPlan();
+    const a = curAcct(), other = a === "NA" ? "JP" : "NA";
     view.innerHTML = `
-      <p class="note" style="margin-top:0">${esc(t("planHint2"))}</p>
+      <p class="note" style="margin-top:0">${t(a === "NA" ? "planAcctNA" : "planAcctJP")}</p>
       ${planListHtml(plan)}
+      ${plan.length ? `<button class="copy-row" id="planCopy"><span>📋 ${esc(t("planCopyTo", { r: other }))}</span><b>${esc(t("planCopy"))} ›</b></button>` : ""}
+      <p class="note">${esc(t("planHint2"))}</p>
       <div class="section" id="planTotal"></div>`;
     bindPlanList(view, draw, (i) => { location.hash = "#/plan/" + i; });
+    const cp = $("#planCopy");
+    if (cp) cp.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (!cp.classList.contains("confirm")) {
+        cp.classList.add("confirm");
+        cp.querySelector("b").textContent = t("planCopyQ");
+        setTimeout(() => { if (cp.isConnected) { cp.classList.remove("confirm"); cp.querySelector("b").textContent = t("planCopy") + " ›"; } }, 3000);
+        return;
+      }
+      copyPlan(a, other);
+      draw();
+    });
     planTotals(plan, $("#planTotal"), "plan");
   };
+  acctSeg(draw);
   draw();
+}
+function copyPlan(from, to) {
+  const dst = loadPlan(to);
+  let n = 0, skip = 0;
+  for (const e of loadPlan(from)) {
+    if (dst.some((x) => x.id === e.id)) continue;
+    if (to === "NA" && !inNA(e.id)) { skip++; continue; }
+    dst.push(JSON.parse(JSON.stringify(e)));
+    n++;
+  }
+  savePlan(dst, to);
+  toast(t("planCopied", { n, r: to }) + (skip ? " · " + t("planSkipped", { n: skip }) : ""));
 }
 async function planTotals(plan, el, routeName) {
   if (!plan.length || !el) return;
@@ -2223,7 +2433,7 @@ function openPlanSheet(newId) {
   const draw = () => {
     const plan = loadPlan();
     openSheet(`
-      <div class="pl-sheet-h"><b>${esc(t("plan"))}</b><small>${esc(t("planCount", { n: plan.length }))}</small>
+      <div class="pl-sheet-h"><b>${esc(t("plan"))}</b><span class="acct-badge">${curAcct()}</span><small>${esc(t("planCount", { n: plan.length }))}</small>
         <button class="icon-btn" data-close="1" aria-label="Close">✕</button></div>
       <p class="note" style="margin:0 2px 10px">${esc(t("planHint2"))}</p>
       ${planListHtml(plan, newId)}
@@ -2402,9 +2612,9 @@ function bindLongPress(root, selector, onLong) {
 }
 
 // ---------- Bottom sheet ----------
-function openSheet(html, onClick) {
+function openSheet(html, onClick, cls) {
   const sh = $("#sheet");
-  sh.innerHTML = `<div class="sheet-shade" data-close="1"></div><div class="sheet-panel">${html}</div>`;
+  sh.innerHTML = `<div class="sheet-shade" data-close="1"></div><div class="sheet-panel ${cls || ""}">${html}</div>`;
   sh.classList.remove("hidden");
   sh.onclick = (ev) => {
     if (ev.target.closest("[data-close]")) { closeSheet(); return; }
@@ -2479,7 +2689,9 @@ async function openPicker(slot) {
   });
   const draw = () => {
     const q = norm(pk.q.trim());
+    const naOnly = curAcct() === "NA";
     const arr = state.list.filter((s) =>
+      (!naOnly || inNA(s.id)) &&
       (pk.cls === "all" || classGroup(s.cls) === pk.cls) &&
       (pk.r === "all" || String(s.r) === pk.r) &&
       (!q || norm(s.name).includes(q) || norm(s.orig).includes(q) || String(s.no) === q))
@@ -2496,6 +2708,294 @@ async function openPicker(slot) {
   };
   $("#pkQ").addEventListener("input", (e) => { pk.q = e.target.value; draw(); });
   draw();
+}
+
+
+// ---------- Mi Chaldea: the servants you own (one collection per account) ----------
+function loadCol(a) {
+  const c = store.get("col_" + (a || curAcct()), null);
+  return c && typeof c === "object" && !Array.isArray(c) ? c : {};
+}
+function saveCol(c, a) { store.set("col_" + (a || curAcct()), c); }
+function newColEntry() { return { s: [1, 1, 1], a: [0, 0, 0, 0, 0], np: 1 }; }
+function clampN(v, lo, hi, def) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def;
+}
+function normColEntry(e) {
+  e.s = [0, 1, 2].map((i) => clampN(e.s && e.s[i], 1, 10, 1));
+  e.a = [0, 1, 2, 3, 4].map((i) => clampN(e.a && e.a[i], 0, 10, 0));
+  e.np = clampN(e.np, 1, 5, 1);
+  return e;
+}
+function classesInList(list) {
+  const present = new Map();
+  for (const s of list) { const g = classGroup(s.cls); if (!present.has(g)) present.set(g, s.cid); }
+  const classes = CLASS_ORDER.filter((c) => present.has(c)).concat([...present.keys()].filter((c) => !CLASS_ORDER.includes(c)));
+  return { classes, present };
+}
+function classChipsHtml(id, sel) {
+  const { classes, present } = classesInList(state.list);
+  return `<div class="chips" id="${id}">
+    <button class="chip ${sel === "all" ? "active" : ""}" data-cls="all">${esc(t("allClasses"))}</button>
+    ${classes.map((c) => `<button class="chip icon-only ${sel === c ? "active" : ""}" data-cls="${esc(c)}"><img src="${classIcon(present.get(c), 5)}" alt="${esc(className(c))}" loading="lazy" onerror="this.replaceWith(document.createTextNode(this.alt))"></button>`).join("")}
+  </div>`;
+}
+function rarityChipsHtml(id, sel) {
+  return `<div class="chips" id="${id}">
+    <button class="chip ${sel === "all" ? "active" : ""}" data-r="all">${esc(t("allRarities"))}</button>
+    ${[5, 4, 3, 2, 1, 0].map((r) => `<button class="chip ${String(sel) === String(r) ? "active" : ""}" data-r="${r}">${r}★</button>`).join("")}
+  </div>`;
+}
+function svtMatches(s, f) {
+  const q = norm((f.q || "").trim());
+  return (f.cls === "all" || classGroup(s.cls) === f.cls) &&
+    (f.r === "all" || String(s.r) === String(f.r)) &&
+    (!q || norm(s.name).includes(q) || norm(s.orig).includes(q) || String(s.no) === q);
+}
+function acctList(a) {
+  return state.list.filter((s) => a === "JP" || inNA(s.id));
+}
+const bySvtOrder = (x, y) => y.r - x.r || y.no - x.no;
+
+async function renderChaldea() {
+  setHeader(esc(t("myChaldea")), false);
+  if (!state.list || state.listLang !== settings.data) {
+    renderLoading();
+    try { await loadList(false); } catch (e) { return renderError(renderChaldea); }
+    if (currentRoute().name !== "chaldea") return;
+  }
+  const f = state.chF || (state.chF = { q: "", cls: "all", r: "all" });
+  const drawGrid = () => {
+    const a = curAcct(), col = loadCol(a);
+    const owned = acctList(a).filter((s) => col[s.id]);
+    const shown = owned.filter((s) => svtMatches(s, f)).sort(bySvtOrder);
+    const grid = $("#chGrid"); if (!grid) return;
+    grid.innerHTML = shown.map((s) => `<button class="chf" data-c="${s.id}"><img src="${esc(s.face)}" alt="" loading="lazy" onerror="imgErr(this)"></button>`).join("");
+    $("#chHint").textContent = !owned.length ? t("chEmpty") : !shown.length ? t("noResults") : t("chTapHint");
+  };
+  const draw = () => {
+    const a = curAcct(), col = loadCol(a);
+    const all = acctList(a);
+    const n = all.filter((s) => col[s.id]).length;
+    view.innerHTML = `
+      <div class="ch-top"><span>${t("chHave", { n: `<b>${n}</b>`, m: all.length })}</span>
+        <button class="ch-edit" id="chEdit">✎ ${esc(t("chEdit"))}</button></div>
+      <input id="chQ" class="search" type="search" placeholder="${esc(t("chSearch"))}" value="${esc(f.q)}" autocomplete="off">
+      ${classChipsHtml("chCls", f.cls)}
+      ${rarityChipsHtml("chR", f.r)}
+      <div class="ch-grid" id="chGrid"></div>
+      <p class="note" id="chHint" style="text-align:center"></p>`;
+    drawGrid();
+    $("#chQ").addEventListener("input", (e) => { f.q = e.target.value; drawGrid(); });
+    $("#chEdit").addEventListener("click", () => openChaldeaEdit(draw));
+  };
+  view.onclick = (e) => {
+    const c = e.target.closest("[data-cls]");
+    if (c && c.closest("#chCls")) { f.cls = c.dataset.cls; $("#chCls").querySelectorAll(".chip").forEach((x) => x.classList.toggle("active", x === c)); drawGrid(); return; }
+    const r = e.target.closest("[data-r]");
+    if (r && r.closest("#chR")) { f.r = r.dataset.r; $("#chR").querySelectorAll(".chip").forEach((x) => x.classList.toggle("active", x === r)); drawGrid(); return; }
+    const sv = e.target.closest("[data-c]");
+    if (sv) location.hash = "#/c/" + sv.dataset.c;
+  };
+  acctSeg(draw);
+  draw();
+  mountSideTab(t("bkTitle"), [
+    { id: "save", icon: "💾", label: t("bkSave"), sub: t("bkSaveSub") },
+    { id: "share", icon: "📤", label: t("bkShare"), sub: t("bkShareSub") },
+    { id: "import", icon: "📥", label: t("bkImport"), sub: t("bkImportSub") },
+  ], (id) => {
+    if (id === "save") saveBackup();
+    else if (id === "share") shareBackup();
+    else importBackup(draw);
+  });
+}
+
+function openChaldeaEdit(onSaved) {
+  const a = curAcct();
+  const col = loadCol(a);
+  const all = acctList(a);
+  const sel = new Set(all.filter((s) => col[s.id]).map((s) => s.id));
+  const before = new Set(sel);
+  const f = { q: "", own: "all", cls: "all", r: "all" };
+  const visible = () => all.filter((s) => svtMatches(s, f) &&
+    (f.own === "all" || (f.own === "yes") === sel.has(s.id))).sort(bySvtOrder);
+  openSheet(`
+    <div class="ed">
+      <div class="ed-h"><b>${esc(t("chEditTitle"))}</b><span class="acct-badge">${a}</span>
+        <button class="icon-btn" data-close="1" aria-label="Close">✕</button></div>
+      <input id="edQ" class="search" type="search" placeholder="${esc(t("search"))}" autocomplete="off">
+      <div class="seg3" id="edOwn">${[["all", "chAll"], ["yes", "chHaveF"], ["no", "chNotF"]].map(([v, k]) =>
+        `<button class="${v === "all" ? "on" : ""}" data-own="${v}">${esc(t(k))}</button>`).join("")}</div>
+      <div class="ed-row"><span>${esc(t("chMarkHint"))}</span><button class="ed-all" id="edAll">☑ ${esc(t("chMarkAll"))}</button></div>
+      ${classChipsHtml("edCls", "all")}
+      ${rarityChipsHtml("edR", "all")}
+      <div class="ch-grid ed-grid" id="edGrid"></div>
+      <div class="ed-bar">
+        <button class="ed-cancel" data-close="1">${esc(t("cancel"))}</button>
+        <span id="edCount"></span>
+        <button class="ed-save" id="edSave">${esc(t("save"))}</button>
+      </div>
+    </div>`, (ev) => {
+    const o = ev.target.closest("[data-own]");
+    if (o) { f.own = o.dataset.own; document.querySelectorAll("#edOwn button").forEach((x) => x.classList.toggle("on", x === o)); return draw(); }
+    const c = ev.target.closest("[data-cls]");
+    if (c) { f.cls = c.dataset.cls; document.querySelectorAll("#edCls .chip").forEach((x) => x.classList.toggle("active", x === c)); return draw(); }
+    const r = ev.target.closest("[data-r]");
+    if (r) { f.r = r.dataset.r; document.querySelectorAll("#edR .chip").forEach((x) => x.classList.toggle("active", x === r)); return draw(); }
+    if (ev.target.closest("#edAll")) {
+      const vis = visible();
+      const allOn = vis.length && vis.every((s) => sel.has(s.id));
+      vis.forEach((s) => (allOn ? sel.delete(s.id) : sel.add(s.id)));
+      return draw();
+    }
+    const it = ev.target.closest("[data-e]");
+    if (it) {
+      const id = Number(it.dataset.e);
+      if (sel.has(id)) sel.delete(id); else sel.add(id);
+      it.classList.toggle("on", sel.has(id));
+      it.classList.toggle("added", sel.has(id) && !before.has(id));
+      count();
+      return;
+    }
+    if (ev.target.closest("#edSave")) {
+      const next = {};
+      for (const id of sel) next[id] = col[id] ? normColEntry(col[id]) : newColEntry();
+      // keep entries of servants not listed for this account (e.g. not loaded in this language)
+      for (const id in col) if (!all.some((s) => String(s.id) === String(id))) next[id] = col[id];
+      saveCol(next, a);
+      closeSheet();
+      toast(t("chSaved", { n: sel.size }));
+      onSaved();
+    }
+  }, "tall");
+  const count = () => {
+    let add = 0, rem = 0;
+    for (const id of sel) if (!before.has(id)) add++;
+    for (const id of before) if (!sel.has(id)) rem++;
+    $("#edCount").innerHTML = `<b>${sel.size}</b> ${esc(t("chMarked"))}${add ? ` · <em class="up">+${add}</em>` : ""}${rem ? ` · <em class="down">−${rem}</em>` : ""}`;
+  };
+  const draw = () => {
+    $("#edGrid").innerHTML = visible().map((s) => `<button class="chf ed-it ${sel.has(s.id) ? "on" : ""} ${sel.has(s.id) && !before.has(s.id) ? "added" : ""}" data-e="${s.id}"><img src="${esc(s.face)}" alt="" loading="lazy" onerror="imgErr(this)"></button>`).join("")
+      || `<div class="state" style="grid-column:1/-1">${esc(t("noResults"))}</div>`;
+    count();
+  };
+  $("#edQ").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
+  draw();
+}
+
+// ---------- Backup: save / share / import (own backups and Chaldea's userdata.json) ----------
+function backupJson() {
+  return JSON.stringify({
+    app: "fgo-codex", kind: "backup", v: 1, date: new Date().toISOString(),
+    chaldea: { NA: loadCol("NA"), JP: loadCol("JP") },
+    plan: { NA: loadPlan("NA"), JP: loadPlan("JP") },
+  });
+}
+function backupName() {
+  const d = new Date();
+  return `fgo-codex-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.json`;
+}
+function downloadBackup() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([backupJson()], { type: "application/json" }));
+  a.download = backupName();
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function saveBackup() {
+  const app = nativeApp();
+  if (!app || !app.saveText) return downloadBackup();
+  const r = app.saveText(backupName(), backupJson());
+  toast(t(r === "ok" ? "bkSaved" : r === "perm" ? "permRetry" : "bkError"));
+}
+function shareBackup() {
+  const app = nativeApp();
+  if (!app || !app.shareText) return downloadBackup();
+  if (app.shareText(backupName(), backupJson()) !== "ok") toast(t("bkError"));
+}
+function importBackup(after) {
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = ".json,application/json,text/plain,*/*";
+  inp.style.display = "none";
+  inp.addEventListener("change", () => {
+    const file = inp.files && inp.files[0];
+    inp.remove();
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = () => handleImport(String(rd.result || ""), after);
+    rd.onerror = () => toast(t("bkBad"));
+    rd.readAsText(file);
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+function handleImport(text, after) {
+  let o = null;
+  try { o = JSON.parse(text); } catch (e) { o = null; }
+  if (o && o.app === "fgo-codex" && o.chaldea) return confirmOwnBackup(o, after);
+  if (o && Array.isArray(o.users)) return confirmChaldeaImport(o, after);
+  toast(t("bkBad"));
+}
+function confirmOwnBackup(o, after) {
+  const n = (r) => Object.keys((o.chaldea && o.chaldea[r]) || {}).length;
+  const p = (r) => ((o.plan && o.plan[r]) || []).filter(Boolean).length;
+  openSheet(`
+    <div class="pl-sheet-h"><b>${esc(t("bkRestoreTitle"))}</b><button class="icon-btn" data-close="1" aria-label="Close" style="margin-left:auto">✕</button></div>
+    <p class="w-txt">${esc(t("bkRestoreText"))}${o.date ? `<br><small class="note">${esc(new Date(o.date).toLocaleString())}</small>` : ""}</p>
+    ${ACCTS.map((r) => `<div class="imp-row"><span class="w-fl">${r}</span><span>${esc(t("bkCounts", { n: n(r), p: p(r) }))}</span></div>`).join("")}
+    <button class="btn" id="bkGo" style="margin-top:8px">${esc(t("bkRestore"))}</button>`, (ev) => {
+    if (!ev.target.closest("#bkGo")) return;
+    for (const r of ACCTS) {
+      const c = (o.chaldea && o.chaldea[r]) || {};
+      for (const id in c) normColEntry(c[id]);
+      saveCol(c, r);
+      savePlan(((o.plan && o.plan[r]) || []).filter(Boolean), r);
+    }
+    closeSheet();
+    toast(t("bkDone"));
+    if (after) after();
+  });
+}
+// Chaldea app (chaldea-center): userdata.json -> users[] { name, region, servants: { collectionNo: { cur: { favorite, skills, appendSkills, npLv } } } }
+function confirmChaldeaImport(o, after) {
+  const byNo = new Map((state.list || []).map((s) => [s.no, s]));
+  const users = o.users.map((u, i) => {
+    const col = {};
+    for (const [k, st] of Object.entries((u && u.servants) || {})) {
+      const cur = st && st.cur;
+      if (!cur || !cur.favorite) continue;
+      const s = byNo.get(Number(k));
+      if (!s) continue;
+      col[s.id] = normColEntry({ s: cur.skills, a: cur.appendSkills, np: cur.npLv != null ? cur.npLv : cur._npLv });
+    }
+    const reg = String((u && u.region) || "").toLowerCase() === "na" ? "NA" : "JP";
+    return { name: (u && u.name) || `#${i + 1}`, reg, to: reg, col };
+  }).filter((u) => Object.keys(u.col).length);
+  if (!users.length) { toast(t("bkEmpty")); return; }
+  const rows = () => users.map((u, i) => `
+    <div class="imp-row"><div class="imp-t"><b>${esc(u.name)}</b><small>${esc(t("bkChaldeaUser", { n: Object.keys(u.col).length, r: u.reg }))}</small></div>
+      <div class="rseg small">${[...ACCTS, "-"].map((r) => `<button data-u="${i}" data-to="${r}" class="${u.to === r ? "on" : ""}">${r === "-" ? "✕" : r}</button>`).join("")}</div></div>`).join("");
+  openSheet(`
+    <div class="pl-sheet-h"><b>${esc(t("bkChaldeaTitle"))}</b><button class="icon-btn" data-close="1" aria-label="Close" style="margin-left:auto">✕</button></div>
+    <p class="w-txt">${esc(t("bkChaldeaText"))}</p>
+    <div id="impRows">${rows()}</div>
+    <button class="btn" id="impGo" style="margin-top:8px">${esc(t("bkImport"))}</button>`, (ev) => {
+    const b = ev.target.closest("[data-to]");
+    if (b) { users[Number(b.dataset.u)].to = b.dataset.to; $("#impRows").innerHTML = rows(); return; }
+    if (!ev.target.closest("#impGo")) return;
+    let total = 0;
+    for (const u of users) {
+      if (u.to === "-") continue;
+      saveCol(u.col, u.to);
+      total += Object.keys(u.col).length;
+    }
+    closeSheet();
+    toast(t("bkImported", { n: total }));
+    if (after) after();
+  });
 }
 
 
@@ -2661,6 +3161,8 @@ function tickBanners() {
   const now = Date.now() / 1000;
   els.forEach((el) => {
     const end = Number(el.dataset.end), start = Number(el.dataset.start || 0);
+    if (el.classList.contains("srv-clock")) { el.textContent = serverClock(el.dataset.rg); return; }
+    if (el.classList.contains("day-cd") && end <= now) { if (currentRoute().name === "daily") { renderDailyTop(); renderDailyDay(); } return; }
     if (el.classList.contains("cd-txt")) el.textContent = "⏱ " + countdown(end);
     else if (el.classList.contains("cd-big")) el.textContent = countdown(end);
     else if (el.classList.contains("bbar")) el.firstElementChild.style.width = Math.min(100, ((now - start) / (end - start)) * 100) + "%";
@@ -2693,11 +3195,13 @@ async function renderBanners() {
           <div class="bnC-art">${ids.map((id) => svtArt(id)).join("")}</div>
           <span class="b-tag">${esc(b.type === "friendPoint" ? t("bnFp") : t("bnQuartz"))}</span>
           <span class="bnC-cd cd-txt" data-end="${b.end}">⏱ ${countdown(b.end)}</span>
-          <div class="bnC-nm">${esc(bannerName(b))}</div>
           <div class="bnC-bot">
             <div class="bnC-row">
-              <span class="bnC-dt">${esc(serverDate(b.start, region))} → ${esc(serverDate(b.end, region))}</span>
-              <span class="bnC-faces">${b.f.slice(0, 5).map((id) => unitFace(id, 30)).join("")}</span>
+              <div class="bnC-l">
+                <div class="bnC-nm">${esc(bannerName(b))}</div>
+                <span class="bnC-dt">${esc(serverDate(b.start, region))} → ${esc(serverDate(b.end, region))}</span>
+              </div>
+              <span class="bnC-faces">${b.f.slice(0, 4).map((id) => unitFace(id, 46)).join("")}</span>
             </div>
             <div class="bbar" data-end="${b.end}" data-start="${b.start}"><i style="width:${Math.min(100, ((now - b.start) / (b.end - b.start)) * 100)}%"></i></div>
           </div>
@@ -2927,93 +3431,114 @@ async function renderCeDetail(id) {
 }
 
 // ---------- View: settings ----------
+const GITHUB_URL = "https://github.com/Anuxi007/fatego-app";
+function setRow(icon, color, title, sub, control, attrs) {
+  return `<div class="set-row" ${attrs || ""}>
+    <span class="set-ic" style="background:${color}">${icon}</span>
+    <span class="set-t"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</span>
+    ${control || ""}
+  </div>`;
+}
+function segMini(id, opts, cur) {
+  return `<div class="seg-mini" id="${id}">${opts.map(([v, l]) => `<button class="${v === cur ? "on" : ""}" data-v="${v}">${esc(l)}</button>`).join("")}</div>`;
+}
+function watchList() {
+  const app = nativeApp();
+  if (!app || !app.getWatchList) return {};
+  try { return JSON.parse(app.getWatchList() || "{}") || {}; } catch (e) { return {}; }
+}
 function renderSettings() {
   setHeader(esc(t("settings")), false);
+  const app = nativeApp();
+  const watched = watchList();
+  const nWatch = Object.keys(watched).length;
   view.innerHTML = `
-    <div class="section">
-      <h2>${esc(t("uiLanguage"))}</h2>
-      <div class="opt-list" id="uiOpts">
-        ${UI_LANGS.map((l) => `
-          <button class="opt ${settings.ui === l ? "active" : ""}" data-l="${l}">
-            <span>${esc(I18N[l].langName)}</span>${settings.ui === l ? '<span class="check">✓</span>' : ""}
-          </button>`).join("")}
-      </div>
+    <div class="set-app">
+      <span class="set-logo">★</span>
+      <span class="set-t"><b>FGO Codex</b><small>${app ? esc(t("versionN", { v: app.getVersionName() })) : "Web"}</small></span>
+      ${app ? `<button class="set-btn" id="updCheckBtn">${esc(t("updCheckShort"))}</button>` : ""}
     </div>
-    <div class="section">
-      <h2>${esc(t("dataLanguage"))}</h2>
-      <div class="opt-list" id="dataOpts">
-        ${[["en", "dataEn"], ["ja", "dataJa"]].map(([l, k]) => `
-          <button class="opt ${settings.data === l ? "active" : ""}" data-l="${l}">
-            <span>${esc(t(k))}</span>${settings.data === l ? '<span class="check">✓</span>' : ""}
-          </button>`).join("")}
-      </div>
-      <p class="note">${esc(t("dataNote"))}</p>
-      ${settings.ui === "es" ? `
-        <button class="opt ${settings.trGame !== false ? "active" : ""}" id="trToggle" style="margin-top:10px">
-          <span>${esc(t("trGame"))}</span><span class="check">${settings.trGame !== false ? "✓" : ""}</span>
-        </button>
-        <p class="note">${esc(t("trNote"))}</p>` : ""}
+    <h3 class="set-h">${esc(t("setLang"))}</h3>
+    <div class="set-card">
+      ${setRow("🌐", "#1e3a8a", t("uiLanguage"), "", segMini("uiSeg", UI_LANGS.map((l) => [l, l.toUpperCase()]), settings.ui))}
+      ${setRow("📖", "#5b21b6", t("dataLanguage"), t("dataSub"), segMini("dataSeg", [["en", "EN"], ["ja", "JP"]], settings.data))}
+      ${settings.ui === "es" ? setRow("✍️", "#065f46", t("trGame"), t("trSub"), `<span class="sw ${settings.trGame !== false ? "on" : ""}"></span>`, 'id="trToggle" role="button"') : ""}
     </div>
-    <div class="section" style="text-align:center">
-      <button class="btn ghost" id="refreshBtn">↻ ${esc(t("refresh"))}</button>
-    </div>
-    ${nativeApp() ? `
-    <div class="section">
-      <h2>${esc(t("updSection"))}</h2>
-      <div class="card upd-card">
-        <span>${esc(t("currentVersion"))}: <b>${esc(nativeApp().getVersionName())}</b></span>
-        <button class="btn ghost" id="updCheckBtn">${esc(t("updCheck"))}</button>
-      </div>
-      <button class="opt ${nativeApp().getNotifications() ? "active" : ""}" id="notifToggle" style="margin-top:10px">
-        <span>${esc(t("notifications"))}</span><span class="check">${nativeApp().getNotifications() ? "✓" : ""}</span>
-      </button>
-      <p class="note">${esc(t("notifNote"))}</p>
+    ${app ? `
+    <h3 class="set-h">${esc(t("setNotif"))}</h3>
+    <div class="set-card">
+      ${setRow("🔔", "#9a3412", t("notifTitle"), t("notifSub"), `<span class="sw ${app.getNotifications() ? "on" : ""}"></span>`, 'id="notifToggle" role="button"')}
+      ${setRow("⭐", "#a16207", t("watchedTitle"), t("watchedSub"), `<span class="set-val">${nWatch}</span><span class="set-go">›</span>`, 'id="watchRow" role="button"')}
     </div>` : ""}
-    <p class="footer-note">${esc(t("source"))}<br><a href="https://github.com/Anuxi007/fatego-app/blob/main/PRIVACY.md">${esc(t("privacy"))}</a></p>
+    <h3 class="set-h">${esc(t("setAbout"))}</h3>
+    <div class="set-card">
+      ${setRow('<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.4 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.400 9.400 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2z"/></svg>', "#24292f", t("githubTitle"), t("githubSub"), '<span class="set-go">↗</span>', `id="ghRow" role="button"`)}
+      ${setRow("🗑", "#1e40af", t("clearCache"), t("clearCacheSub"), '<span class="set-go" id="cacheGo">›</span>', 'id="cacheRow" role="button"')}
+    </div>
+    <p class="footer-note">${esc(t("source"))}<br><a href="${GITHUB_URL}/blob/main/PRIVACY.md">${esc(t("privacy"))}</a></p>
   `;
-  $("#uiOpts").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-l]"); if (!b) return;
-    const prevUi = settings.ui;
-    settings.ui = b.dataset.l;
-    // Japanese UI pairs naturally with Japanese data; switching away goes back to English data
-    if (settings.ui === "ja") settings.data = "ja";
-    else if (prevUi === "ja") settings.data = "en";
-    saveSettings();
-    renderSettings();
-  });
-  $("#dataOpts").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-l]"); if (!b) return;
-    settings.data = b.dataset.l;
-    saveSettings();
-    renderSettings();
-  });
-  const notifBtn = $("#notifToggle");
-  if (notifBtn) notifBtn.addEventListener("click", () => {
-    nativeApp().setNotifications(!nativeApp().getNotifications());
-    renderSettings();
-  });
-  const updBtn = $("#updCheckBtn");
-  if (updBtn) updBtn.addEventListener("click", () => checkForUpdate(true));
-  const trBtn = $("#trToggle");
-  if (trBtn) trBtn.addEventListener("click", () => {
-    settings.trGame = settings.trGame === false;
-    saveSettings();
-    renderSettings();
-  });
-  $("#refreshBtn").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    try {
-      state.details = {};
-      store.set("tr_es", null);
-      TR = null;
-      await Promise.all([loadList(true), loadTranslations()]);
-      toast(t("refreshed"));
-    } catch (err) {
-      toast(t("loadError"));
+  view.onclick = async (e) => {
+    const ui = e.target.closest("#uiSeg [data-v]");
+    if (ui) {
+      const prevUi = settings.ui;
+      settings.ui = ui.dataset.v;
+      // Japanese UI pairs naturally with Japanese data; switching away goes back to English data
+      if (settings.ui === "ja") settings.data = "ja";
+      else if (prevUi === "ja") settings.data = "en";
+      saveSettings();
+      return renderSettings();
     }
-    btn.disabled = false;
+    const dt = e.target.closest("#dataSeg [data-v]");
+    if (dt) { settings.data = dt.dataset.v; saveSettings(); return renderSettings(); }
+    if (e.target.closest("#trToggle")) { settings.trGame = settings.trGame === false; saveSettings(); return renderSettings(); }
+    if (e.target.closest("#notifToggle")) { app.setNotifications(!app.getNotifications()); return renderSettings(); }
+    if (e.target.closest("#updCheckBtn")) return checkForUpdate(true);
+    if (e.target.closest("#ghRow")) { location.href = GITHUB_URL; return; }
+    if (e.target.closest("#watchRow")) return openWatchedSheet();
+    const cr = e.target.closest("#cacheRow");
+    if (cr) {
+      const go = $("#cacheGo");
+      if (!cr.classList.contains("confirm")) {
+        cr.classList.add("confirm");
+        go.textContent = t("clearCacheQ");
+        setTimeout(() => { if (cr.isConnected) { cr.classList.remove("confirm"); go.textContent = "›"; } }, 3000);
+        return;
+      }
+      await clearCaches();
+      renderSettings();
+    }
+  };
+}
+function openWatchedSheet() {
+  const w = watchList();
+  const ids = Object.keys(w);
+  const face = (id) => ((state.list || []).find((x) => String(x.id) === id) || {}).face || "";
+  openSheet(`
+    <div class="pl-sheet-h"><b>${esc(t("watchedTitle"))}</b><small>${ids.length}</small>
+      <button class="icon-btn" data-close="1" aria-label="Close">✕</button></div>
+    ${ids.length ? `<div class="bd-list">${ids.map((id) => `
+      <div class="bd-it" data-svt="${id}"><span class="bf" style="--s:40px"><img src="${esc(face(id))}" alt="" onerror="imgErr(this)"></span>
+        <div><b>${esc(w[id].name || "#" + id)}</b><small>🔔 ${[w[id].na ? "NA" : "", w[id].jp ? "JP" : ""].filter(Boolean).join(" · ")}</small></div><span class="go">›</span></div>`).join("")}</div>`
+      : `<p class="w-txt">${esc(t("watchedNone"))}</p>`}`, (ev) => {
+    const sv = ev.target.closest("[data-svt]");
+    if (sv) { closeSheet(); location.hash = "#/s/" + sv.dataset.svt; }
   });
+}
+// Drops cached game data (lists, translations, drops, banners…) but keeps settings, plans and Mi Chaldea
+async function clearCaches() {
+  const keep = /^(settings|filters|acct|plan_|col_|gotoY|bannerRegion|dailyRegion|bnRem|updCheck)/;
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+    keys.filter((k) => k && !keep.test(k)).forEach((k) => localStorage.removeItem(k));
+  } catch (e) { /* ignore */ }
+  state.details = {}; state.list = null; state.ceList = null; state.index = null;
+  TR = null; DAILY = null; DROPS = null; BANNERS = null;
+  for (const k in qinfoMem) delete qinfoMem[k];
+  const app = nativeApp();
+  if (app && app.clearWebCache) app.clearWebCache();
+  try { await Promise.all([loadList(true), loadTranslations(), loadIndex()]); toast(t("cacheCleared")); }
+  catch (e) { toast(t("loadError")); }
 }
 
 // ---------- Start ----------
