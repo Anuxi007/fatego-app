@@ -287,6 +287,7 @@ function route() {
   view.oninput = null;
   document.documentElement.lang = settings.ui;
   if (!$("#sheet").classList.contains("hidden")) closeSheet();
+  if (r.name !== "detail") { state.curSvt = null; setBarActions(null); unmountGoTo(); }
   document.body.classList.toggle("on-detail", r.name === "detail");
   updateBarSolid();
   if (r.name === "detail") renderDetail(r.id);
@@ -620,33 +621,32 @@ async function renderDetail(id) {
               <span class="htag stars-tag">${stars(svt.rarity)}</span>
             </div>
           </div>
-          ${art.length ? `<button class="dhero-zoom" id="zoomBtn" aria-label="Zoom"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>` : ""}
+          <div class="hero-acts" id="heroActs">${svtActionsHtml(svt)}${art.length ? `<button class="dhero-zoom" id="zoomBtn" aria-label="Zoom"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>` : ""}</div>
         </div>
         ${art.length > 1 ? artSelector(art, tab) : ""}
       </div>
     </div>
     ${svt._partial && t("notInNA") ? `<div class="notice">${esc(t("notInNA"))}</div>` : ""}
 
-    <div class="section">
+    <div class="section" id="go-profile">
       <h2>${esc(t("profile"))}</h2>
       ${profileCard(svt)}
     </div>
-    ${watchCard(svt)}
 
     <div class="section">
       <h2>${esc(t("stats"))}</h2>
       ${statsCard(svt)}
     </div>
 
-    ${cardsSection(svt)}
+    <div id="go-cards">${cardsSection(svt)}</div>
 
-    ${levelSection("skills", t("skills"), versionsPerNum(svt.skills), svt.skillMaterials)}
-    ${levelSection("np", t("np"), npList(svt), null)}
-    ${levelSection("append", t("appendSkills"), appendList(svt), svt.appendSkillMaterials)}
+    <div id="go-skills">${levelSection("skills", t("skills"), versionsPerNum(svt.skills), svt.skillMaterials)}</div>
+    <div id="go-np">${levelSection("np", t("np"), npList(svt), null)}</div>
+    <div id="go-append">${levelSection("append", t("appendSkills"), appendList(svt), svt.appendSkillMaterials)}</div>
     ${passiveSection(svt)}
-    ${matsSection(t("ascension"), svt.ascensionMaterials, (k) => `${t("stage")} ${Number(k) + 1}`)}
-    ${totalsSection(svt)}
-    ${traitsSection(svt)}
+    <div id="go-mats">${matsSection(t("ascension"), svt.ascensionMaterials, (k) => `${t("stage")} ${Number(k) + 1}`)}
+    ${totalsSection(svt)}</div>
+    <div id="go-traits">${traitsSection(svt)}</div>
 
     <a class="link-btn" href="https://apps.atlasacademy.io/db/${region}/servant/${svt.collectionNo}">${esc(t("openAtlas"))} ↗</a>
     <p class="footer-note">${esc(t("source"))}</p>
@@ -655,6 +655,10 @@ async function renderDetail(id) {
   bindLevelSection("skills", versionsPerNum(svt.skills), svt.skillMaterials);
   bindLevelSection("np", npList(svt), null);
   bindLevelSection("append", appendList(svt), svt.appendSkillMaterials);
+  state.curSvt = svt;
+  fillUnlocks(svt);
+  setBarActions(svt);
+  mountGoTo();
 
   const seg = $("#statSeg");
   if (seg) seg.addEventListener("click", (e) => {
@@ -684,6 +688,172 @@ async function renderDetail(id) {
   const hi = $("#heroImg");
   if (hi) hi.addEventListener("click", openViewer);
 }
+
+
+// ---------- Rank Up / Interlude that unlocks an upgraded skill or NP ----------
+const QINFO_KEY = "qinfo_v1";
+const qinfoMem = store.get(QINFO_KEY, {});
+const NA_LAG = 2 * 365 * 86400; // NA runs roughly two years behind JP
+async function questInfo(id) {
+  const key = String(id);
+  const c = qinfoMem[key];
+  if (c && Date.now() - c.ts < (c.na ? 30 : 3) * 86400000) return c;
+  let jp = null, en = null, na = null;
+  try { jp = await getJSON(`${API}/nice/JP/quest/${id}`); } catch (e) { /* unknown quest */ }
+  try { en = await getJSON(`${API}/nice/JP/quest/${id}?lang=en`); } catch (e) { /* ignore */ }
+  try { na = await getJSON(`${API}/nice/NA/quest/${id}`); } catch (e) { na = null; }
+  if (!jp && !na) return null;
+  const jname = (jp && jp.name) || "";
+  const info = {
+    ts: Date.now(),
+    rankUp: /強化クエスト/.test(jname) || /rank ?up/i.test((na && na.name) || (en && en.name) || ""),
+    jname, ename: (en && en.name) || jname, naname: na ? na.name : "",
+    na: !!na, opened: (jp && jp.openedAt) || 0,
+  };
+  qinfoMem[key] = info;
+  store.set(QINFO_KEY, qinfoMem);
+  return info;
+}
+function cleanQuestName(n) {
+  return String(n || "").replace(/\s*\n\s*/g, " ").replace(/^(強化クエスト|Rank Up Quest|幕間の物語)\s*[:：]?\s*/i, "")
+    .trim().replace(/^[(（](.*)[)）]$/, "$1").trim();
+}
+async function fillUnlocks(svt) {
+  const els = [...document.querySelectorAll(".unlock[data-q]")];
+  if (!els.length) return;
+  // number the rank ups of this servant (1, 2, …) in release order
+  const ids = new Set();
+  for (const sk of svt.skills || []) if (sk.condQuestId > 0) ids.add(sk.condQuestId);
+  for (const np of svt.noblePhantasms || []) if (np.condQuestId > 0) ids.add(np.condQuestId);
+  const infos = {};
+  await Promise.all([...ids].map(async (q) => { infos[q] = await questInfo(q); }));
+  if (state.curSvt !== svt) return;
+  const ranks = [...ids].filter((q) => infos[q] && infos[q].rankUp)
+    .sort((a, b) => (infos[a].opened - infos[b].opened) || a - b);
+  const loc = settings.ui === "ja" ? "ja-JP" : settings.ui === "es" ? "es-PE" : "en-US";
+  document.querySelectorAll(".unlock[data-q]").forEach((el) => {
+    const q = Number(el.dataset.q);
+    const info = infos[q];
+    if (!info) return;
+    const name = cleanQuestName(settings.data === "ja" ? info.jname : (info.naname || info.ename));
+    const kind = info.rankUp ? `${t("rankUp")} ${ranks.indexOf(q) + 1}` : t("interlude");
+    let status;
+    if (info.na) status = `<span class="ul-na ok">● ${esc(t("inNA"))}</span>`;
+    else {
+      const eta = info.opened ? info.opened + NA_LAG : 0;
+      const etaTxt = eta > Date.now() / 1000
+        ? new Intl.DateTimeFormat(loc, { month: "numeric", year: "numeric" }).format(new Date(eta * 1000))
+        : t("etaSoon");
+      status = `<span class="ul-na no">● ${esc(t("jpOnlyQ"))}${eta ? ` · ${esc(t("etaNA", { d: etaTxt }))}` : ""}</span>`;
+    }
+    el.innerHTML = `🔓 <b>${esc(kind)}</b>${name ? `: ${esc(name)}` : ""}<br>${status}`;
+  });
+}
+
+// ---------- "Go to" side tab on the servant page ----------
+const GOTO = [
+  ["top", "goTop", "⬆"], ["go-profile", "goProfile", "📋"], ["go-cards", "cards", "🃏"],
+  ["go-skills", "skills", "✦"], ["go-np", "np", "⚔"], ["go-append", "appendSkills", "➕"],
+  ["go-mats", "goMats", "💎"], ["go-traits", "traits", "🏷"],
+];
+function unmountGoTo() {
+  const el = $("#goto"); if (el) el.remove();
+  document.body.classList.remove("goto-open");
+}
+function mountGoTo() {
+  unmountGoTo();
+  const el = document.createElement("div");
+  el.id = "goto";
+  const items = GOTO.filter(([id]) => id === "top" || (document.getElementById(id) && document.getElementById(id).children.length));
+  el.innerHTML = `
+    <div class="goto-shade"></div>
+    <div class="goto-panel">
+      <div class="goto-h">${esc(t("goTo"))}</div>
+      ${items.map(([id, key, ic]) => `<button class="goto-it" data-go="${id}"><i>${ic}</i>${esc(t(key))}</button>`).join("")}
+    </div>
+    <button class="goto-tab" aria-label="${esc(t("goTo"))}"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`;
+  document.body.appendChild(el);
+  const tab = el.querySelector(".goto-tab");
+  const place = () => {
+    const f = store.get("gotoY", 0.75);
+    const y = Math.max(70, Math.min(window.innerHeight - 90, f * window.innerHeight));
+    tab.style.top = y + "px";
+    el.querySelector(".goto-panel").style.setProperty("--y", y + "px");
+  };
+  place();
+  const open = (on) => {
+    const now = on == null ? !document.body.classList.contains("goto-open") : on;
+    if (now) {
+      // highlight the section on screen
+      let cur = "top";
+      for (const [id] of items) {
+        const n = document.getElementById(id);
+        if (n && n.getBoundingClientRect().top < window.innerHeight * 0.4) cur = id;
+      }
+      el.querySelectorAll(".goto-it").forEach((b) => b.classList.toggle("cur", b.dataset.go === cur));
+    }
+    document.body.classList.toggle("goto-open", now);
+  };
+  el.querySelector(".goto-shade").addEventListener("click", () => open(false));
+  el.querySelector(".goto-panel").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-go]"); if (!b) return;
+    open(false);
+    if (b.dataset.go === "top") { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    const n = document.getElementById(b.dataset.go);
+    if (n) window.scrollTo({ top: n.getBoundingClientRect().top + window.scrollY - 64, behavior: "smooth" });
+  });
+  // tab: tap = toggle, drag up/down = move it, drag left = open
+  let g = null;
+  tab.addEventListener("touchstart", (ev) => {
+    const tch = ev.touches[0];
+    g = { x: tch.clientX, y: tch.clientY, top: parseFloat(tab.style.top), mode: null };
+  }, { passive: true });
+  tab.addEventListener("touchmove", (ev) => {
+    if (!g) return;
+    const tch = ev.touches[0];
+    const dx = tch.clientX - g.x, dy = tch.clientY - g.y;
+    if (!g.mode && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) g.mode = Math.abs(dy) > Math.abs(dx) ? "move" : "swipe";
+    if (g.mode === "move") {
+      if (ev.cancelable) ev.preventDefault();
+      const y = Math.max(70, Math.min(window.innerHeight - 90, g.top + dy));
+      tab.style.top = y + "px";
+      el.querySelector(".goto-panel").style.setProperty("--y", y + "px");
+    } else if (g.mode === "swipe" && ev.cancelable) ev.preventDefault();
+  }, { passive: false });
+  tab.addEventListener("touchend", (ev) => {
+    if (!g) return;
+    const was = g; g = null;
+    const tch = ev.changedTouches[0];
+    if (was.mode === "move") { store.set("gotoY", parseFloat(tab.style.top) / window.innerHeight); return; }
+    if (was.mode === "swipe") { open(tch.clientX - was.x < 0); return; }
+    ev.preventDefault();
+    open();
+  });
+  tab.addEventListener("click", () => open());
+}
+// Swipe from the right edge (servant page) opens the "Go to" panel
+(function gotoEdgeSwipe() {
+  let s = null;
+  document.addEventListener("touchstart", (ev) => {
+    if (!$("#goto") || ev.touches.length !== 1 || document.body.classList.contains("goto-open")) return;
+    if (!$("#sheet").classList.contains("hidden") || document.body.classList.contains("drawer-open")) return;
+    const tch = ev.touches[0];
+    if (tch.clientX < window.innerWidth - 24 || ev.target.closest(".goto-tab, input[type=range]")) return;
+    s = { x: tch.clientX, y: tch.clientY };
+  }, { passive: true });
+  document.addEventListener("touchmove", (ev) => {
+    if (!s) return;
+    const tch = ev.touches[0];
+    const dx = tch.clientX - s.x, dy = tch.clientY - s.y;
+    if (Math.abs(dy) > 30 && Math.abs(dy) > Math.abs(dx)) { s = null; return; }
+    if (dx < -40) {
+      s = null;
+      const tab = document.querySelector("#goto .goto-tab");
+      if (tab) tab.click();
+    }
+  }, { passive: true });
+  document.addEventListener("touchend", () => { s = null; });
+})();
 
 // ---------- Detail: hero, profile, stats, cards ----------
 function artSelector(art, tab) {
@@ -735,33 +905,83 @@ function regionLabel(svt) {
 function pct2(v) {
   return v == null ? "–" : num(v / 100, 2) + "%";
 }
-// Follow a servant: notify when it is announced / starts a banner in NA and/or JP (off by default)
-function watchCard(svt) {
+// ---------- Servant page actions: add to plan, banner alerts ----------
+const ICON_PLAN = '<svg viewBox="0 0 24 24"><path d="M4 20h16M7 16V9M12 16V5M17 16v-4"/></svg>';
+const ICON_BELL = '<svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>';
+function watchState(id) {
   const app = nativeApp();
-  if (!app || !app.setWatch) return "";
-  const [na, jp] = String(app.getWatch(svt.id) || "0,0").split(",").map((x) => x === "1");
-  return `<div class="card watch" id="watchCard" data-id="${svt.id}">
-    <div class="watch-t">🔔 <span>${esc(t("watchHead"))}</span></div>
-    <div class="watch-opts">
-      <button class="rem ${na ? "on" : ""}" data-w="na">${na ? "✓ " : ""}NA</button>
-      <button class="rem ${jp ? "on" : ""}" data-w="jp">${jp ? "✓ " : ""}JP</button>
-    </div>
-  </div>`;
+  if (!app || !app.getWatch) return null;
+  const [na, jp] = String(app.getWatch(id) || "0,0").split(",").map((x) => x === "1");
+  return { na, jp };
+}
+function svtActionsHtml(svt) {
+  const pos = loadPlan().findIndex((e) => e.id === svt.id);
+  const w = watchState(svt.id);
+  const wl = w ? [w.na ? "NA" : "", w.jp ? "JP" : ""].filter(Boolean).join("·") : "";
+  return `<button class="act-btn ${pos >= 0 ? "on" : ""}" data-act="plan" aria-label="${esc(t("plan"))}">${ICON_PLAN}${pos >= 0 ? `<span class="act-dot">#${pos + 1}</span>` : ""}</button>
+    ${w ? `<button class="act-btn ${wl ? "on" : ""}" data-act="watch" aria-label="${esc(t("watchHead"))}">${ICON_BELL}${wl ? `<span class="act-dot">${wl}</span>` : ""}</button>` : ""}`;
+}
+function setBarActions(svt) {
+  const bar = $("#barActs");
+  if (bar) bar.innerHTML = svt ? svtActionsHtml(svt) : "";
+  const hero = $("#heroActs");
+  if (hero && svt) {
+    const zoom = $("#zoomBtn");
+    hero.innerHTML = svtActionsHtml(svt);
+    if (zoom) hero.appendChild(zoom);
+  }
 }
 document.addEventListener("click", (ev) => {
-  const b = ev.target.closest("#watchCard [data-w]");
-  if (!b) return;
-  const card = b.closest("#watchCard");
-  const id = Number(card.dataset.id);
-  const app = nativeApp();
-  const btns = card.querySelectorAll("[data-w]");
-  b.classList.toggle("on");
-  btns.forEach((x) => { x.textContent = (x.classList.contains("on") ? "✓ " : "") + x.dataset.w.toUpperCase(); });
-  const na = btns[0].classList.contains("on"), jp = btns[1].classList.contains("on");
-  const name = ($(".dhero-name") || {}).textContent || "";
-  const r = app.setWatch(id, name, na, jp);
-  toast(t(!na && !jp ? "watchOff" : r === "perm" ? "remPerm" : "watchOn"));
+  const b = ev.target.closest("[data-act]");
+  if (!b || !b.closest("#heroActs, #barActs")) return;
+  const svt = state.curSvt;
+  if (!svt || currentRoute().name !== "detail") return;
+  if (b.dataset.act === "watch") openWatchSheet(svt);
+  else addToPlanAndShow(svt);
 });
+function openWatchSheet(svt) {
+  const w = watchState(svt.id) || { na: false, jp: false };
+  const face = (state.list && (state.list.find((x) => x.id === svt.id) || {}).face) ||
+    firstOf(svt.extraAssets && svt.extraAssets.faces && svt.extraAssets.faces.ascension) || "";
+  const row = (k, label, sub) => `
+    <button class="w-opt" data-w="${k}">
+      <span class="w-fl">${k.toUpperCase()}</span>
+      <span class="w-t"><b>${esc(label)}</b><small>${esc(sub)}</small></span>
+      <span class="sw ${w[k] ? "on" : ""}"></span>
+    </button>`;
+  openSheet(`
+    <div class="w-head"><img src="${esc(face)}" alt="" onerror="imgErr(this)"><div><b>${esc(svt.name)}</b><small>🔔 ${esc(t("watchTitle"))}</small></div>
+      <button class="icon-btn" data-close="1" aria-label="Close">✕</button></div>
+    <p class="w-txt">${t("watchExplain")}</p>
+    ${row("na", t("serverNA"), t("tzPacific"))}
+    ${row("jp", t("serverJP"), t("tzJapan"))}
+    <p class="note" style="text-align:center">${esc(t("watchChange"))}</p>`, (ev) => {
+    const o = ev.target.closest("[data-w]"); if (!o) return;
+    w[o.dataset.w] = !w[o.dataset.w];
+    o.querySelector(".sw").classList.toggle("on", w[o.dataset.w]);
+    const r = nativeApp().setWatch(svt.id, svt.name, w.na, w.jp);
+    toast(t(!w.na && !w.jp ? "watchOff" : r === "perm" ? "remPerm" : "watchOn"));
+    setBarActions(svt);
+  });
+}
+function addToPlanAndShow(svt) {
+  const plan = loadPlan();
+  let pos = plan.findIndex((e) => e.id === svt.id);
+  let added = false;
+  if (pos < 0) {
+    const brief = (state.list && state.list.find((x) => x.id === svt.id)) || {
+      id: svt.id, no: svt.collectionNo, name: svt.name, face: firstOf(svt.extraAssets.faces.ascension),
+      cls: svt.className, cid: svt.classId, r: svt.rarity,
+    };
+    plan.push(newPlanEntry(brief));
+    savePlan(plan);
+    pos = plan.length - 1;
+    added = true;
+    toast(t("planAdded", { n: pos + 1 }));
+  }
+  setBarActions(svt);
+  openPlanSheet(added ? svt.id : null);
+}
 function profileCard(svt) {
   const np = currentNp(svt);
   const g = np && np.npGain;
@@ -1416,7 +1636,7 @@ function skillBlock(key, i, entry, mats) {
     <div class="ver-toggle">${entry.versions.map((_, k) =>
       `<button class="chip ${k === vi ? "active" : ""}" data-ver="${k}">${esc(versionLabel(k, entry.versions.length))}</button>`).join("")}
     </div>` : "";
-  const unlock = vi > 0 && (skill.condQuestId > 0 || isNP) ? `<div class="d-sub unlock">🔓 ${esc(t("unlockQuest"))}</div>` : "";
+  const unlock = vi > 0 && (skill.condQuestId > 0 || isNP) ? `<div class="d-sub unlock" ${skill.condQuestId > 0 ? `data-q="${skill.condQuestId}"` : ""}>🔓 ${esc(t("unlockQuest"))}</div>` : "";
   const lvLabel = isNP ? t("npLevel") : t("level");
   return `
     <div class="skill" data-i="${i}">
@@ -1496,6 +1716,7 @@ function bindLevelSection(key, list, mats) {
     if (!state.ver[key]) state.ver[key] = {};
     state.ver[key][i] = Number(b.dataset.ver);
     block.outerHTML = skillBlock(key, i, list[i], mats);
+    if (state.curSvt) fillUnlocks(state.curSvt);
   });
 }
 
@@ -1787,12 +2008,10 @@ async function renderDaily() {
 
 
 // ---------- Upgrade plan ----------
-const PLAN_SLOTS = 5;
+const PLAN_MIN_SLOTS = 3;
 function loadPlan() {
   const p = store.get("plan", null);
-  const arr = Array.isArray(p) ? p.slice(0, PLAN_SLOTS) : [];
-  while (arr.length < PLAN_SLOTS) arr.push(null);
-  return arr;
+  return Array.isArray(p) ? p.filter(Boolean) : [];
 }
 function savePlan(p) { store.set("plan", p); }
 function pad2(n) { return String(n).padStart(2, "0"); }
@@ -1868,55 +2087,151 @@ function costBlock(c) {
     ${matTiles(c.items)}`;
 }
 
-function planSlotHtml(e, i) {
-  if (!e) {
-    return `<button class="plan-slot empty" data-slot="${i}"><span class="plus">+</span><span>${esc(t("planAdd"))}</span></button>`;
-  }
+const ICON_SWAP = '<svg viewBox="0 0 24 24"><path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></svg>';
+const ICON_DEL = '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
+function planRowHtml(e, i, isNew) {
   const sum = planSummary(e);
   return `
-    <button class="plan-slot" data-slot="${i}">
+    <div class="pl-row ${isNew ? "new" : ""}" data-i="${i}">
+      <span class="pl-grip" aria-hidden="true">⋮⋮</span>
       <img class="face" src="${esc(e.face)}" alt="" onerror="imgErr(this)">
-      <div class="plan-info">
-        <div class="svt-name">${esc(e.name)}</div>
-        <div class="plan-sum"><span>${esc(t("skillsShort"))}</span><b>${sum.skills}</b></div>
-        <div class="plan-sum"><span>${esc(t("appendShort"))}</span><b>${sum.append}</b></div>
+      <div class="pl-info">
+        <div class="svt-name">${esc(e.name)}${isNew ? `<span class="pl-new">${esc(t("planNew"))}</span>` : ""}</div>
+        <div class="pl-sum">${esc(t("skillsShort"))} <b>${sum.skills}</b> · ${esc(t("appendShort"))} <b>${sum.append}</b></div>
       </div>
-      <span class="plan-asc">${esc(t("stageShort"))} ${e.cur.asc}</span>
-    </button>`;
+      <button class="pl-btn" data-pl="swap" aria-label="${esc(t("planChange"))}">${ICON_SWAP}</button>
+      <button class="pl-btn del" data-pl="del" aria-label="${esc(t("planRemove"))}">${ICON_DEL}</button>
+    </div>`;
+}
+function planListHtml(plan, newId) {
+  const rows = plan.map((e, i) => planRowHtml(e, i, e.id === newId)).join("");
+  const empties = Math.max(0, PLAN_MIN_SLOTS - plan.length);
+  const empty = Array.from({ length: empties }, () => `<button class="pl-empty" data-pl="add"><b>＋</b>${esc(t("planFree"))}</button>`).join("");
+  const more = plan.length >= PLAN_MIN_SLOTS ? `<button class="pl-empty pl-more" data-pl="add"><b>＋</b>${esc(t("planAddMore"))}</button>` : "";
+  return `<div class="pl-list" id="plList">${rows}${empty}${more}</div>`;
+}
+// Shared behaviour for the plan list (page and overlay): open, swap, delete, long-press to reorder
+function bindPlanList(root, rerender, onOpen) {
+  root.onclick = (ev) => {
+    const b = ev.target.closest("[data-pl]");
+    const row = ev.target.closest(".pl-row");
+    if (b && b.dataset.pl === "add") { openPicker(-1); return; }
+    if (b && row) {
+      const i = Number(row.dataset.i);
+      if (b.dataset.pl === "swap") { openPicker(i); return; }
+      if (b.dataset.pl === "del") {
+        if (!b.classList.contains("confirm")) {
+          b.classList.add("confirm");
+          b.innerHTML = esc(t("planDelQ"));
+          setTimeout(() => { if (b.isConnected) { b.classList.remove("confirm"); b.innerHTML = ICON_DEL; } }, 3000);
+          return;
+        }
+        const plan = loadPlan(); plan.splice(i, 1); savePlan(plan);
+        if (state.curSvt) setBarActions(state.curSvt);
+        rerender();
+        return;
+      }
+    }
+    if (row && !row.dataset.dragged) onOpen(Number(row.dataset.i));
+    if (row) delete row.dataset.dragged;
+  };
+  // long-press + drag to reorder (touch)
+  let lp = null, drag = null;
+  const list = root.querySelector("#plList") || root;
+  list.addEventListener("touchstart", (ev) => {
+    const row = ev.target.closest(".pl-row");
+    if (!row || ev.target.closest("[data-pl]") || ev.touches.length !== 1) return;
+    const tch = ev.touches[0];
+    lp = { row, x: tch.clientX, y: tch.clientY, timer: setTimeout(() => {
+      if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) { /* ignore */ } }
+      const rect = row.getBoundingClientRect();
+      drag = { row, startY: lp.y, top0: row.offsetTop, h: rect.height };
+      row.classList.add("dragging");
+      lp = null;
+    }, 400) };
+  }, { passive: true });
+  list.addEventListener("touchmove", (ev) => {
+    const tch = ev.touches[0];
+    if (lp && (Math.abs(tch.clientX - lp.x) > 10 || Math.abs(tch.clientY - lp.y) > 10)) { clearTimeout(lp.timer); lp = null; }
+    if (!drag) return;
+    if (ev.cancelable) ev.preventDefault();
+    const rows = [...list.querySelectorAll(".pl-row")];
+    const dy = tch.clientY - drag.startY;
+    const center = drag.top0 + dy + drag.h / 2;
+    for (const other of rows) {
+      if (other === drag.row) continue;
+      const mid = other.offsetTop + other.offsetHeight / 2;
+      if (other.offsetTop < drag.row.offsetTop && center < mid) { list.insertBefore(drag.row, other); break; }
+      if (other.offsetTop > drag.row.offsetTop && center > mid) { list.insertBefore(drag.row, other.nextSibling); break; }
+    }
+    drag.row.style.transform = `translateY(${drag.top0 + dy - drag.row.offsetTop}px) scale(1.02)`;
+  }, { passive: false });
+  const end = () => {
+    if (lp) { clearTimeout(lp.timer); lp = null; }
+    if (!drag) return;
+    const row = drag.row; drag = null;
+    row.classList.remove("dragging");
+    row.style.transform = "";
+    row.dataset.dragged = "1";
+    setTimeout(() => { delete row.dataset.dragged; }, 400);
+    const order = [...list.querySelectorAll(".pl-row")].map((r) => Number(r.dataset.i));
+    const plan = loadPlan();
+    if (order.length === plan.length && order.some((v, k) => v !== k)) {
+      savePlan(order.map((k) => plan[k]));
+      if (state.curSvt) setBarActions(state.curSvt);
+    }
+    rerender();
+  };
+  list.addEventListener("touchend", end);
+  list.addEventListener("touchcancel", end);
+  list.addEventListener("contextmenu", (ev) => { if (ev.target.closest(".pl-row")) ev.preventDefault(); });
 }
 
 async function renderPlan() {
   setHeader(esc(t("plan")), false);
-  const plan = loadPlan();
-  view.innerHTML = `
-    <p class="note" style="margin-top:0">${esc(t("planHint"))}</p>
-    <div class="plan-slots" id="planSlots">${plan.map(planSlotHtml).join("")}</div>
-    <div class="section" id="planTotal"></div>`;
-  bindLongPress($("#planSlots"), ".plan-slot:not(.empty)", (el) => openSlotSheet(Number(el.dataset.slot)));
-  $("#planSlots").addEventListener("click", (e) => {
-    const b = e.target.closest(".plan-slot"); if (!b || b.dataset.longpressed) { if (b) delete b.dataset.longpressed; return; }
-    const i = Number(b.dataset.slot);
-    if (b.classList.contains("empty")) openPicker(i);
-    else location.hash = "#/plan/" + i;
-  });
-  // Combined totals
-  const filled = plan.filter(Boolean);
-  if (!filled.length) return;
-  $("#planTotal").innerHTML = `<h2>${esc(t("planTotal"))}</h2><div class="card"><div class="spinner"></div></div>`;
+  const draw = () => {
+    const plan = loadPlan();
+    view.innerHTML = `
+      <p class="note" style="margin-top:0">${esc(t("planHint2"))}</p>
+      ${planListHtml(plan)}
+      <div class="section" id="planTotal"></div>`;
+    bindPlanList(view, draw, (i) => { location.hash = "#/plan/" + i; });
+    planTotals(plan, $("#planTotal"), "plan");
+  };
+  draw();
+}
+async function planTotals(plan, el, routeName) {
+  if (!plan.length || !el) return;
+  el.innerHTML = `<h2>${esc(t("planTotal"))}</h2><div class="card"><div class="spinner"></div></div>`;
   try {
     const map = new Map();
     let qp = 0;
-    for (const e of filled) {
+    for (const e of plan) {
       const svt = await loadServant(e.id);
       const c = planCost(svt, e, false);
       addMats(map, c.items);
       qp += c.qp;
     }
-    if (currentRoute().name !== "plan") return;
-    $("#planTotal").innerHTML = `<h2>${esc(t("planTotal"))}</h2><div class="card">${costBlock({ items: matsList(map), qp })}</div>`;
+    if (routeName && currentRoute().name !== routeName) return;
+    if (!el.isConnected) return;
+    el.innerHTML = `<h2>${esc(t("planTotal"))}</h2><div class="card">${costBlock({ items: matsList(map), qp })}</div>`;
   } catch (err) {
-    $("#planTotal").innerHTML = `<div class="state">${esc(t("loadError"))}</div>`;
+    if (el.isConnected) el.innerHTML = `<div class="state">${esc(t("loadError"))}</div>`;
   }
+}
+function openPlanSheet(newId) {
+  const draw = () => {
+    const plan = loadPlan();
+    openSheet(`
+      <div class="pl-sheet-h"><b>${esc(t("plan"))}</b><small>${esc(t("planCount", { n: plan.length }))}</small>
+        <button class="icon-btn" data-close="1" aria-label="Close">✕</button></div>
+      <p class="note" style="margin:0 2px 10px">${esc(t("planHint2"))}</p>
+      ${planListHtml(plan, newId)}
+      <a class="pl-total-link" href="#/plan">${esc(t("planTotal"))} <span>${esc(t("planSeeAll"))} ›</span></a>`);
+    const panel = document.querySelector("#sheet .sheet-panel");
+    bindPlanList(panel, draw, (i) => { closeSheet(); location.hash = "#/plan/" + i; });
+  };
+  draw();
 }
 
 // Materials for one track (ascension, skill i or append i) from current to target
@@ -2113,7 +2428,7 @@ function openSlotSheet(i) {
     const b = ev.target.closest("[data-act]"); if (!b) return;
     closeSheet();
     if (b.dataset.act === "remove") {
-      plan[i] = null; savePlan(plan); renderPlan();
+      plan.splice(i, 1); savePlan(plan); renderPlan();
     } else openPicker(i);
   });
 }
@@ -2151,10 +2466,15 @@ async function openPicker(slot) {
     if (pick) {
       const s = state.list.find((x) => String(x.id) === pick.dataset.pick);
       const plan = loadPlan();
-      plan[slot] = newPlanEntry(s);
+      const dup = plan.findIndex((x) => x.id === s.id);
+      if (dup >= 0 && dup !== slot) { closeSheet(); toast(t("planAlready", { n: dup + 1 })); location.hash = "#/plan/" + dup; return; }
+      let i = slot;
+      if (i < 0 || i >= plan.length) { plan.push(newPlanEntry(s)); i = plan.length - 1; }
+      else plan[i] = newPlanEntry(s);
       savePlan(plan);
       closeSheet();
-      location.hash = "#/plan/" + slot;
+      if (state.curSvt) setBarActions(state.curSvt);
+      location.hash = "#/plan/" + i;
     }
   });
   const draw = () => {
@@ -2369,13 +2689,16 @@ async function renderBanners() {
       ${list.length ? list.map((b) => {
         const left = b.end - now;
         const ids = b.f.slice(0, 6);
-        return `<div class="bnE ${left < 86400 ? "urg" : ""}" data-b="${b.id}">
-          <div class="bnE-art">${ids.length ? ids.map((id) => svtArt(id)).join("") : ""}</div>
+        return `<div class="bnC ${left < 86400 ? "urg" : ""}" data-b="${b.id}">
+          <div class="bnC-art">${ids.map((id) => svtArt(id)).join("")}</div>
           <span class="b-tag">${esc(b.type === "friendPoint" ? t("bnFp") : t("bnQuartz"))}</span>
-          <span class="bnE-cd cd-txt" data-end="${b.end}">⏱ ${countdown(b.end)}</span>
-          <div class="bnE-txt">
-            <div class="bnE-nm">${esc(bannerName(b))}</div>
-            <div class="bnE-dt">${esc(serverDate(b.start, region))} → ${esc(serverDate(b.end, region))}</div>
+          <span class="bnC-cd cd-txt" data-end="${b.end}">⏱ ${countdown(b.end)}</span>
+          <div class="bnC-nm">${esc(bannerName(b))}</div>
+          <div class="bnC-bot">
+            <div class="bnC-row">
+              <span class="bnC-dt">${esc(serverDate(b.start, region))} → ${esc(serverDate(b.end, region))}</span>
+              <span class="bnC-faces">${b.f.slice(0, 5).map((id) => unitFace(id, 30)).join("")}</span>
+            </div>
             <div class="bbar" data-end="${b.end}" data-start="${b.start}"><i style="width:${Math.min(100, ((now - b.start) / (b.end - b.start)) * 100)}%"></i></div>
           </div>
         </div>`;
