@@ -2969,7 +2969,7 @@ function renderSettings() {
       </button>
       <p class="note">${esc(t("notifNote"))}</p>
     </div>` : ""}
-    <p class="footer-note">${esc(t("source"))} · api.atlasacademy.io</p>
+    <p class="footer-note">${esc(t("source"))}<br><a href="https://github.com/Anuxi007/fatego-app/blob/main/PRIVACY.md">${esc(t("privacy"))}</a></p>
   `;
   $("#uiOpts").addEventListener("click", (e) => {
     const b = e.target.closest("[data-l]"); if (!b) return;
